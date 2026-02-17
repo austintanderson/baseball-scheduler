@@ -20,7 +20,8 @@ import {
   FolderOpen,
   Search,
   Printer,
-  WifiOff
+  WifiOff,
+  FileText
 } from 'lucide-react';
 
 // --- Local Storage Abstraction ---
@@ -45,7 +46,7 @@ const storage = {
     const newSave = { 
       ...data, 
       id: `local-${Date.now()}`, 
-      createdAt: new Date() // Store as date object for immediate use, serialize on save
+      createdAt: new Date().toISOString() 
     };
     saves.unshift(newSave);
     localStorage.setItem(this.KEY, JSON.stringify(saves));
@@ -179,6 +180,9 @@ export default function App() {
   const [scheduleStats, setScheduleStats] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [newCoachName, setNewCoachName] = useState('');
+  
+  // NEW: External Conflicts State
+  const [externalConflicts, setExternalConflicts] = useState([]);
 
   // --- Effects ---
   useEffect(() => {
@@ -217,7 +221,6 @@ export default function App() {
     if (newTeams.length !== teams.length || hasChanges) {
        setTeams(newTeams);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ageGroups]);
 
   // --- Handlers ---
@@ -225,7 +228,7 @@ export default function App() {
     const name = prompt("Enter a name for this save:", `Schedule ${new Date().toLocaleDateString()}`);
     if (!name) return;
 
-    const data = { name, seasonConfig, weeklySchedule, ageGroups, fields, coaches, teams, schedule, scheduleStats };
+    const data = { name, seasonConfig, weeklySchedule, ageGroups, fields, coaches, teams, schedule, scheduleStats, externalConflicts };
     try {
       storage.save(data);
       setSavedSchedules(storage.loadAll()); // Refresh list
@@ -246,6 +249,7 @@ export default function App() {
     setTeams(save.teams || []);
     setSchedule(save.schedule || []);
     setScheduleStats(save.scheduleStats || null);
+    setExternalConflicts(save.externalConflicts || []);
     setActiveTab('schedule');
   };
 
@@ -286,6 +290,28 @@ export default function App() {
   const handleNumericInput = (val) => {
     if (val === '') return '';
     return parseInt(val);
+  };
+  
+  const parseConflicts = (csvText) => {
+    const lines = csvText.split('\n');
+    const conflicts = [];
+    lines.forEach(line => {
+      const parts = line.split(',').map(s => s.trim());
+      if (parts.length >= 4) {
+        const [date, time, duration, coachName] = parts;
+        const coach = coaches.find(c => c.name.toLowerCase() === coachName.toLowerCase());
+        if (coach) {
+          conflicts.push({
+            dateStr: date,
+            timeStr: time,
+            duration: parseInt(duration) || 90,
+            coachId: coach.id,
+            coachName: coach.name
+          });
+        }
+      }
+    });
+    setExternalConflicts(conflicts);
   };
 
   // --- Export Logic ---
@@ -445,6 +471,15 @@ export default function App() {
     const matchupSides = {};
     const teamHomeCounts = {};
 
+    // NEW: Load External Conflicts into Coach Intervals
+    externalConflicts.forEach(conf => {
+      const start = timeToMins(conf.timeStr);
+      const end = start + conf.duration;
+      const key = `${conf.dateStr}|${conf.coachId}`;
+      if (!coachIntervals[key]) coachIntervals[key] = [];
+      coachIntervals[key].push({ start, end });
+    });
+
     const hasCoachConflict = (teamA, teamB, dateStr, timeStr, gameDurationMins) => {
       const coachesToCheck = [teamA.headCoachId, teamA.asstCoachId, teamB.headCoachId, teamB.asstCoachId].filter(Boolean);
       const gameStart = timeToMins(timeStr);
@@ -483,7 +518,6 @@ export default function App() {
           let matchupConflict = false;
           for (const prevW of previousWeeks) {
               const diff = Math.abs(currentAbsWeek - prevW);
-              // Strict: Must skip a week (diff > 1). Relaxed: Can play adjacent (diff > 0)
               const limit = strictMode.strictMatchup ? 1 : 0;
               if (diff <= limit) { 
                   matchupConflict = true;
@@ -526,9 +560,7 @@ export default function App() {
                 const gameStart = timeToMins(time);
                 const gameEnd = gameStart + durationMins;
                 [game.teamA.headCoachId, game.teamA.asstCoachId, game.teamB.headCoachId, game.teamB.asstCoachId].filter(Boolean).forEach(cid => {
-                   const key = `${day.dateStr}|${cid}`;
-                   if (!coachIntervals[key]) coachIntervals[key] = [];
-                   coachIntervals[key].push({ start: gameStart, end: gameEnd });
+                   addCoachInterval(cid, day.dateStr, gameStart, gameEnd);
                 });
 
                 teamDailyGames[`${day.dateStr}|${game.teamA.id}`] = (teamDailyGames[`${day.dateStr}|${game.teamA.id}`] || 0) + 1;
@@ -666,23 +698,12 @@ export default function App() {
             {daysOfWeek.map((dayName, idx) => (
                <div key={idx} className="flex flex-col gap-2">
                   <label className="flex items-center gap-3 cursor-pointer select-none">
-                     <input 
-                        type="checkbox" 
-                        checked={weeklySchedule[idx].active} 
-                        onChange={() => toggleDayActive(idx)}
-                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
-                     />
-                     <span className={`font-medium text-base ${weeklySchedule[idx].active ? 'text-slate-900' : 'text-slate-400'}`}>
-                        {dayName}
-                     </span>
+                     <input type="checkbox" checked={weeklySchedule[idx].active} onChange={() => toggleDayActive(idx)} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                     <span className={`font-medium text-base ${weeklySchedule[idx].active ? 'text-slate-900' : 'text-slate-400'}`}>{dayName}</span>
                   </label>
                   {weeklySchedule[idx].active && (
                      <div className="pl-8">
-                       <Input 
-                          placeholder="e.g. 09:00, 11:00 (24h)"
-                          value={weeklySchedule[idx].times}
-                          onChange={(e) => updateDayTimes(idx, e.target.value)}
-                       />
+                       <Input placeholder="e.g. 09:00, 11:00 (24h)" value={weeklySchedule[idx].times} onChange={(e) => updateDayTimes(idx, e.target.value)} />
                      </div>
                   )}
                </div>
@@ -719,12 +740,12 @@ export default function App() {
                   <div className="grid gap-3">
                      <Input label="Group Name" value={group.name} onChange={e => { const n=[...ageGroups]; n[idx].name=e.target.value; setAgeGroups(n); }} />
                      <div className="grid grid-cols-2 gap-3">
-                        <Input label="Teams" type="number" min="2" value={group.teamsCount} onChange={e => { const n=[...ageGroups]; n[idx].teamsCount=handleNumericInput(e.target.value); setAgeGroups(n); }} />
-                        <Input label="Games/Tm" type="number" min="1" value={group.gamesPerTeam} onChange={e => { const n=[...ageGroups]; n[idx].gamesPerTeam=handleNumericInput(e.target.value); setAgeGroups(n); }} />
+                        <Input label="Teams" type="number" min="2" value={group.teamsCount} onChange={e => { const n=[...ageGroups]; n[idx].teamsCount=parseInt(e.target.value)||0; setAgeGroups(n); }} />
+                        <Input label="Games/Tm" type="number" min="1" value={group.gamesPerTeam} onChange={e => { const n=[...ageGroups]; n[idx].gamesPerTeam=parseInt(e.target.value)||0; setAgeGroups(n); }} />
                      </div>
                      <div className="grid grid-cols-2 gap-3">
-                        <Input label="Games/Wk" type="number" min="1" value={group.gamesPerWeek} onChange={e => { const n=[...ageGroups]; n[idx].gamesPerWeek=handleNumericInput(e.target.value); setAgeGroups(n); }} />
-                        <Input label="Mins" type="number" min="30" value={group.duration} onChange={e => { const n=[...ageGroups]; n[idx].duration=handleNumericInput(e.target.value); setAgeGroups(n); }} />
+                        <Input label="Games/Wk" type="number" min="1" value={group.gamesPerWeek || 2} onChange={e => { const n=[...ageGroups]; n[idx].gamesPerWeek=parseInt(e.target.value)||0; setAgeGroups(n); }} />
+                        <Input label="Mins" type="number" min="30" value={group.duration || 90} onChange={e => { const n=[...ageGroups]; n[idx].duration=parseInt(e.target.value)||90; setAgeGroups(n); }} />
                      </div>
                   </div>
                </div>
@@ -793,7 +814,8 @@ export default function App() {
           <div className="flex gap-2 mb-4">
              <div className="flex-1">
                 <Input 
-                   placeholder="Add coaches (comma separated)..." 
+                   id="new-coach"
+                   placeholder="Add coach name..." 
                    value={newCoachName}
                    onChange={(e) => setNewCoachName(e.target.value)}
                 />
@@ -819,6 +841,30 @@ export default function App() {
              ))}
           </div>
       </Card>
+      
+      {/* Import Conflicts Card */}
+      <Card className="p-5 mt-6">
+        <h3 className="font-bold text-slate-800 mb-2">Import External Conflicts</h3>
+        <p className="text-sm text-slate-500 mb-4">
+           Paste CSV to block off times for specific coaches (e.g. from other divisions).
+           <br/>
+           Format: <code>YYYY-MM-DD, HH:MM, Duration(min), Coach Name</code>
+        </p>
+        <textarea 
+           className="w-full border border-slate-300 rounded-xl p-3 text-sm font-mono h-32 focus:ring-2 focus:ring-blue-500 outline-none"
+           placeholder="2026-03-01, 09:00, 90, Coach Mike&#10;2026-03-05, 17:30, 90, Coach Sarah"
+           onBlur={(e) => parseConflicts(e.target.value)}
+        />
+        <div className="mt-2 flex items-center gap-2">
+           {externalConflicts.length > 0 ? (
+              <span className="text-sm text-green-600 font-bold flex items-center gap-1">
+                 <CheckCircle className="w-4 h-4" /> {externalConflicts.length} conflicts loaded
+              </span>
+           ) : (
+              <span className="text-sm text-slate-400">No conflicts loaded</span>
+           )}
+        </div>
+     </Card>
 
       <Card className="p-5">
          <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -830,23 +876,11 @@ export default function App() {
              </div>
          ) : (
              <div className="space-y-6">
-                {ageGroups.map(group => {
-                   const headCoachesInGroup = new Set(
-                      teams
-                        .filter(t => t.groupId === group.id && t.headCoachId)
-                        .map(t => t.headCoachId)
-                   );
-
-                   return (
+                {ageGroups.map(group => (
                    <div key={group.id}>
                       <h4 className="font-bold text-sm text-slate-500 uppercase tracking-wider mb-3 ml-1">{group.name} Division</h4>
                       <div className="grid gap-3">
-                         {teams.filter(t => t.groupId === group.id).map(team => {
-                            const eligibleHeadCoaches = coaches.filter(c => 
-                               !headCoachesInGroup.has(c.id) || c.id === team.headCoachId
-                            );
-
-                            return (
+                         {teams.filter(t => t.groupId === group.id).map(team => (
                             <div key={team.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
                                <input 
                                  className="font-bold text-base bg-transparent w-full mb-3 border-b border-slate-200 focus:border-blue-500 outline-none text-slate-900 pb-1"
@@ -862,7 +896,7 @@ export default function App() {
                                         onChange={(e) => handleUpdateTeamCoach(team.id, 'headCoachId', e.target.value)}
                                      >
                                         <option value="">Select...</option>
-                                        {eligibleHeadCoaches.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        {coaches.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                                      </select>
                                   </div>
                                   <div>
@@ -878,10 +912,10 @@ export default function App() {
                                   </div>
                                </div>
                             </div>
-                         )})}
+                         ))}
                       </div>
                    </div>
-                )})}
+                ))}
              </div>
          )}
       </Card>
@@ -912,13 +946,13 @@ export default function App() {
       )}
 
       {schedule.length > 0 && (
-         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm print:hidden">
+         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
             <h4 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <Share className="w-4 h-4 text-blue-600" /> Share & Export
+              <Download className="w-4 h-4 text-blue-600" /> Export Options
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
                 <Button variant="outline" className="w-full py-3" onClick={() => exportToICS()}>
-                   <CalendarCheck className="w-4 h-4" /> Share Calendar (.ics)
+                   <CalendarCheck className="w-4 h-4" /> Save to Calendar (.ics)
                 </Button>
                 <Button variant="outline" onClick={() => window.print()} className="w-full py-3">
                    <Download className="w-4 h-4" /> Print / PDF
@@ -926,7 +960,7 @@ export default function App() {
             </div>
             
             <div className="border-t border-slate-100 pt-4">
-                <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">Share GameChanger CSV</h5>
+                <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">GameChanger (CSV)</h5>
                 <div className="flex flex-wrap gap-2">
                    <Button variant="secondary" className="text-xs py-1.5" onClick={() => exportToGameChanger(null)}>
                       All
@@ -985,7 +1019,7 @@ export default function App() {
       </div>
     </div>
   );
-
+  
   const renderTeamSchedules = () => (
       <div className="space-y-6">
           {teams.map(team => {
@@ -1027,8 +1061,12 @@ export default function App() {
     <div className="space-y-6">
       <Card className="p-5">
         <div className="flex justify-between items-center mb-6">
-          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Save className="w-5 h-5 text-blue-600" /> Saved Schedules</h3>
-          <Button onClick={saveSchedule}><Plus className="w-4 h-4" /> Save Current</Button>
+          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <Save className="w-5 h-5 text-blue-600" /> Saved Schedules
+          </h3>
+          <Button onClick={saveSchedule}>
+            <Plus className="w-4 h-4" /> Save Current
+          </Button>
         </div>
         
         {savedSchedules.length === 0 ? (
@@ -1052,11 +1090,6 @@ export default function App() {
           </div>
         )}
       </Card>
-      
-      <div className="p-4 bg-slate-100 text-slate-500 rounded-xl text-sm flex gap-2 items-start">
-         <WifiOff className="w-4 h-4 mt-0.5 shrink-0" />
-         <p>Using <strong>Offline Storage</strong>. Schedules are saved only on this device. If you delete the app or clear cache, data will be lost.</p>
-      </div>
     </div>
   );
 
@@ -1070,18 +1103,9 @@ export default function App() {
   ];
 
   return (
-    <div className="flex flex-col h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
-      <style>{`
-        @media print {
-          header, .print\\:hidden, .md\\:hidden, button { display: none !important; }
-          .bg-slate-50 { background: white !important; border: 1px solid #ccc !important; }
-          body { background: white !important; }
-          .p-4 { padding: 0.5rem !important; }
-          table { width: 100% !important; font-size: 10pt; }
-        }
-      `}</style>
-      
-      <header className="flex-none bg-white/80 backdrop-blur-md border-b border-slate-200 z-20 print:hidden">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-32 md:pb-10">
+      {/* Header - Simplified for Mobile */}
+      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 h-14 md:h-16 flex items-center justify-between">
            <div className="flex items-center gap-2.5">
               <div className="bg-blue-600 p-1.5 rounded-lg text-white">
@@ -1098,49 +1122,52 @@ export default function App() {
                 <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating}>Regenerate</Button>
              ) : activeTab !== 'saves' && activeTab !== 'team-schedules' ? (
                <Button onClick={generateSchedule} disabled={isGenerating}>
-                 {isGenerating ? 'Working...' : 'Generate'} <ChevronRight className="w-4 h-4" />
+                 {isGenerating ? 'Working...' : 'Generate Schedule'} <ChevronRight className="w-4 h-4" />
                </Button>
              ) : null}
            </div>
         </div>
       </header>
 
-      <main className="flex-1 overflow-y-auto px-4 py-6 pb-32 md:pb-10">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex overflow-x-auto no-scrollbar gap-2 mb-6 pb-2 -mx-4 px-4 md:mx-0 md:px-0 md:flex-wrap print:hidden">
-            {tabs.map(tab => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-all border ${
-                    isActive 
-                      ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' 
-                      : 'bg-white text-slate-500 border-slate-200'
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.label}
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-             {activeTab === 'setup' && renderSetup()}
-             {activeTab === 'fields' && <div className="space-y-6">{renderAgeGroups()}{renderFields()}</div>}
-             {activeTab === 'coaches' && renderCoaches()}
-             {activeTab === 'schedule' && renderSchedule()}
-             {activeTab === 'team-schedules' && renderTeamSchedules()}
-             {activeTab === 'saves' && renderSaves()}
-          </div>
+      <main className="max-w-6xl mx-auto px-4 py-6">
+        
+        {/* Scrollable Mobile Tabs */}
+        <div className="flex overflow-x-auto no-scrollbar gap-2 mb-6 pb-2 -mx-4 px-4 md:mx-0 md:px-0 md:flex-wrap">
+          {tabs.map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-all border ${
+                  isActive 
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' 
+                    : 'bg-white text-slate-500 border-slate-200'
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
+
+        {/* Content Area */}
+        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+           {activeTab === 'setup' && renderSetup()}
+           {activeTab === 'fields' && <div className="space-y-6">{renderAgeGroups()}{renderFields()}</div>}
+           {activeTab === 'coaches' && renderCoaches()}
+           {activeTab === 'schedule' && renderSchedule()}
+           {activeTab === 'team-schedules' && renderTeamSchedules()}
+           {activeTab === 'saves' && renderSaves()}
+        </div>
+
       </main>
 
+      {/* Mobile Sticky Footer Action Bar */}
       {activeTab !== 'saves' && activeTab !== 'team-schedules' && (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)] print:hidden">
+        <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
            {activeTab !== 'schedule' ? (
              <Button onClick={generateSchedule} disabled={isGenerating} fullWidth className="bg-blue-600 text-white shadow-lg shadow-blue-200 py-3.5 text-lg">
                {isGenerating ? 'Working...' : 'Generate Schedule'}

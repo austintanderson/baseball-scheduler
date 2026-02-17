@@ -3,5 +3,13 @@
 @tailwind utilities;
 
 body {
-  background-color: #f8fafc; /* slate-50 matches your app */
+  background-color: #f8fafc;
+  /* CHANGED: Add padding to respect the iPhone Notch and Home Indicator */
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  min-height: 100vh;
+  /* Prevent horizontal scrolling */
+  overflow-x: hidden; 
 }

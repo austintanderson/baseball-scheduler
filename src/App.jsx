@@ -19,7 +19,8 @@ import {
   Save,
   FolderOpen,
   Search,
-  Printer
+  Printer,
+  WifiOff
 } from 'lucide-react';
 
 // --- Local Storage Abstraction ---
@@ -44,7 +45,7 @@ const storage = {
     const newSave = { 
       ...data, 
       id: `local-${Date.now()}`, 
-      createdAt: new Date().toISOString() 
+      createdAt: new Date() // Store as date object for immediate use, serialize on save
     };
     saves.unshift(newSave);
     localStorage.setItem(this.KEY, JSON.stringify(saves));
@@ -216,6 +217,7 @@ export default function App() {
     if (newTeams.length !== teams.length || hasChanges) {
        setTeams(newTeams);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ageGroups]);
 
   // --- Handlers ---
@@ -481,6 +483,7 @@ export default function App() {
           let matchupConflict = false;
           for (const prevW of previousWeeks) {
               const diff = Math.abs(currentAbsWeek - prevW);
+              // Strict: Must skip a week (diff > 1). Relaxed: Can play adjacent (diff > 0)
               const limit = strictMode.strictMatchup ? 1 : 0;
               if (diff <= limit) { 
                   matchupConflict = true;
@@ -663,12 +666,23 @@ export default function App() {
             {daysOfWeek.map((dayName, idx) => (
                <div key={idx} className="flex flex-col gap-2">
                   <label className="flex items-center gap-3 cursor-pointer select-none">
-                     <input type="checkbox" checked={weeklySchedule[idx].active} onChange={() => toggleDayActive(idx)} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
-                     <span className={`font-medium text-base ${weeklySchedule[idx].active ? 'text-slate-900' : 'text-slate-400'}`}>{dayName}</span>
+                     <input 
+                        type="checkbox" 
+                        checked={weeklySchedule[idx].active} 
+                        onChange={() => toggleDayActive(idx)}
+                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                     />
+                     <span className={`font-medium text-base ${weeklySchedule[idx].active ? 'text-slate-900' : 'text-slate-400'}`}>
+                        {dayName}
+                     </span>
                   </label>
                   {weeklySchedule[idx].active && (
                      <div className="pl-8">
-                       <Input placeholder="e.g. 09:00, 11:00 (24h)" value={weeklySchedule[idx].times} onChange={(e) => updateDayTimes(idx, e.target.value)} />
+                       <Input 
+                          placeholder="e.g. 09:00, 11:00 (24h)"
+                          value={weeklySchedule[idx].times}
+                          onChange={(e) => updateDayTimes(idx, e.target.value)}
+                       />
                      </div>
                   )}
                </div>
@@ -678,18 +692,30 @@ export default function App() {
     </div>
   );
 
-  const renderFields = () => (
-    <div className="space-y-6">
-      <Card className="p-5">
+  const renderAgeGroups = () => (
+    <Card className="p-5">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Users className="w-5 h-5 text-blue-600" /> Age Groups</h3>
-          <Button variant="secondary" onClick={() => setAgeGroups([...ageGroups, { id: Date.now(), name: 'New Group', teamsCount: '', gamesPerTeam: '', gamesPerWeek: '', duration: 90 }])}><Plus className="w-4 h-4" /> Add</Button>
+          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <Users className="w-5 h-5 text-blue-600" /> Age Groups
+          </h3>
+          <Button variant="secondary" onClick={() => setAgeGroups([...ageGroups, { id: Date.now(), name: 'New Group', teamsCount: 4, gamesPerTeam: 8, gamesPerWeek: 1, duration: 90 }])}>
+            <Plus className="w-4 h-4" /> Add
+          </Button>
         </div>
-        {ageGroups.length === 0 ? <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200"><p>No groups yet.</p></div> : 
+        {ageGroups.length === 0 ? (
+           <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
+              <p>No groups yet.</p>
+           </div>
+        ) : (
            <div className="space-y-4">
              {ageGroups.map((group, idx) => (
                <div key={group.id} className="bg-slate-50 p-4 rounded-xl border border-slate-200 relative">
-                  <button onClick={() => setAgeGroups(ageGroups.filter(g => g.id !== group.id))} className="absolute top-2 right-2 p-2 text-slate-400 hover:text-red-500"><Trash2 className="w-5 h-5" /></button>
+                  <button 
+                     onClick={() => setAgeGroups(ageGroups.filter(g => g.id !== group.id))}
+                     className="absolute top-2 right-2 p-2 text-slate-400 hover:text-red-500"
+                  >
+                     <Trash2 className="w-5 h-5" />
+                  </button>
                   <div className="grid gap-3">
                      <Input label="Group Name" value={group.name} onChange={e => { const n=[...ageGroups]; n[idx].name=e.target.value; setAgeGroups(n); }} />
                      <div className="grid grid-cols-2 gap-3">
@@ -704,40 +730,73 @@ export default function App() {
                </div>
              ))}
            </div>
-        }
+        )}
       </Card>
-      <Card className="p-5">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><MapPin className="w-5 h-5 text-blue-600" /> Fields</h3>
-          <Button variant="secondary" onClick={() => setFields([...fields, { id: Date.now(), name: 'New Field', allowedGroups: ageGroups.map(g=>g.id) }])}><Plus className="w-4 h-4" /> Add</Button>
-        </div>
-        <div className="space-y-4">
-          {fields.map((field, idx) => (
-            <div key={field.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-              <div className="flex justify-between items-center mb-3">
-                <input className="font-semibold text-lg bg-transparent border-b border-transparent focus:border-blue-500 outline-none w-full text-slate-900" placeholder="Field Name" value={field.name} onChange={e => { const n=[...fields]; n[idx].name=e.target.value; setFields(n); }} />
-                <button onClick={() => setFields(fields.filter(f => f.id !== field.id))} className="text-slate-400 hover:text-red-500 ml-2"><Trash2 className="w-5 h-5" /></button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {ageGroups.map(group => {
-                  const isAllowed = field.allowedGroups.includes(group.id);
-                  return <button key={group.id} onClick={() => toggleFieldAllowance(field.id, group.id)} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${isAllowed ? 'bg-blue-100 text-blue-700 border-blue-200' : 'bg-white text-slate-400 border-slate-200'}`}>{group.name}</button>;
-                })}
-              </div>
+  );
+
+  const renderFields = () => (
+    <Card className="p-5">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <MapPin className="w-5 h-5 text-blue-600" /> Fields
+        </h3>
+        <Button variant="secondary" onClick={() => setFields([...fields, { id: Date.now(), name: 'New Field', allowedGroups: ageGroups.map(g=>g.id) }])}>
+          <Plus className="w-4 h-4" /> Add
+        </Button>
+      </div>
+      <div className="space-y-4">
+        {fields.length === 0 && <p className="text-slate-400 italic text-sm text-center">No fields added.</p>}
+        {fields.map((field, idx) => (
+          <div key={field.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+            <div className="flex justify-between items-center mb-3">
+              <input 
+                className="font-semibold text-lg bg-transparent border-b border-transparent focus:border-blue-500 outline-none w-full text-slate-900"
+                placeholder="Field Name"
+                value={field.name}
+                onChange={e => { const n=[...fields]; n[idx].name=e.target.value; setFields(n); }}
+              />
+              <button onClick={() => setFields(fields.filter(f => f.id !== field.id))} className="text-slate-400 hover:text-red-500 ml-2">
+                <Trash2 className="w-5 h-5" />
+              </button>
             </div>
-          ))}
-        </div>
-      </Card>
-    </div>
+            <div className="flex flex-wrap gap-2">
+              {ageGroups.length === 0 && <span className="text-xs text-slate-400">Add Age Groups first</span>}
+              {ageGroups.map(group => {
+                const isAllowed = field.allowedGroups.includes(group.id);
+                return (
+                  <button
+                    key={group.id}
+                    onClick={() => toggleFieldAllowance(field.id, group.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${
+                      isAllowed 
+                        ? 'bg-blue-100 text-blue-700 border-blue-200' 
+                        : 'bg-white text-slate-400 border-slate-200'
+                    }`}
+                  >
+                    {group.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 
   const renderCoaches = () => (
     <div className="space-y-6">
       <Card className="p-5">
-         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><UserCheck className="w-5 h-5 text-blue-600" /> Coaches</h3>
-         <div className="flex gap-2 mb-4">
+         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <UserCheck className="w-5 h-5 text-blue-600" /> Coaches
+          </h3>
+          <div className="flex gap-2 mb-4">
              <div className="flex-1">
-                <Input placeholder="Add coaches (comma separated)..." value={newCoachName} onChange={(e) => setNewCoachName(e.target.value)} />
+                <Input 
+                   placeholder="Add coaches (comma separated)..." 
+                   value={newCoachName}
+                   onChange={(e) => setNewCoachName(e.target.value)}
+                />
              </div>
              <div className="pt-7"> 
                 <Button onClick={() => {
@@ -751,6 +810,7 @@ export default function App() {
              </div>
           </div>
           <div className="flex flex-wrap gap-2">
+             {coaches.length === 0 && <p className="text-slate-400 italic text-sm">List is empty.</p>}
              {coaches.map(c => (
                 <div key={c.id} className="bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-medium border border-slate-200">
                    {c.name}
@@ -759,42 +819,71 @@ export default function App() {
              ))}
           </div>
       </Card>
+
       <Card className="p-5">
-         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><Settings className="w-5 h-5 text-blue-600" /> Assignments</h3>
-         <div className="space-y-6">
-            {ageGroups.map(group => {
-               const headCoachesInGroup = new Set(teams.filter(t => t.groupId === group.id && t.headCoachId).map(t => t.headCoachId));
-               return (
-               <div key={group.id}>
-                  <h4 className="font-bold text-sm text-slate-500 uppercase tracking-wider mb-3 ml-1">{group.name} Division</h4>
-                  <div className="grid gap-3">
-                     {teams.filter(t => t.groupId === group.id).map(team => {
-                        const eligibleHeadCoaches = coaches.filter(c => !headCoachesInGroup.has(c.id) || c.id === team.headCoachId);
-                        return (
-                        <div key={team.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
-                           <input className="font-bold text-base bg-transparent w-full mb-3 border-b border-slate-200 focus:border-blue-500 outline-none text-slate-900 pb-1" value={team.name} onChange={(e) => setTeams(teams.map(t => t.id === team.id ? { ...t, name: e.target.value } : t))} />
-                           <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                 <label className="text-xs font-bold text-slate-400 uppercase block mb-1">Head Coach</label>
-                                 <select className="w-full text-sm p-2 border border-slate-300 rounded-lg bg-white outline-none" value={team.headCoachId} onChange={(e) => handleUpdateTeamCoach(team.id, 'headCoachId', e.target.value)}>
-                                    <option value="">Select...</option>
-                                    {eligibleHeadCoaches.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                 </select>
-                              </div>
-                              <div>
-                                 <label className="text-xs font-bold text-slate-400 uppercase block mb-1">Assistant</label>
-                                 <select className="w-full text-sm p-2 border border-slate-300 rounded-lg bg-white outline-none" value={team.asstCoachId} onChange={(e) => handleUpdateTeamCoach(team.id, 'asstCoachId', e.target.value)}>
-                                    <option value="">Select...</option>
-                                    {coaches.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                                 </select>
-                              </div>
-                           </div>
-                        </div>
-                     )})}
-                  </div>
-               </div>
-            )})}
-         </div>
+         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <Settings className="w-5 h-5 text-blue-600" /> Assignments
+         </h3>
+         {teams.length === 0 ? (
+             <div className="text-center py-8 text-slate-400 border border-dashed rounded-lg bg-slate-50">
+                Go to "Fields & Groups" first.
+             </div>
+         ) : (
+             <div className="space-y-6">
+                {ageGroups.map(group => {
+                   const headCoachesInGroup = new Set(
+                      teams
+                        .filter(t => t.groupId === group.id && t.headCoachId)
+                        .map(t => t.headCoachId)
+                   );
+
+                   return (
+                   <div key={group.id}>
+                      <h4 className="font-bold text-sm text-slate-500 uppercase tracking-wider mb-3 ml-1">{group.name} Division</h4>
+                      <div className="grid gap-3">
+                         {teams.filter(t => t.groupId === group.id).map(team => {
+                            const eligibleHeadCoaches = coaches.filter(c => 
+                               !headCoachesInGroup.has(c.id) || c.id === team.headCoachId
+                            );
+
+                            return (
+                            <div key={team.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4">
+                               <input 
+                                 className="font-bold text-base bg-transparent w-full mb-3 border-b border-slate-200 focus:border-blue-500 outline-none text-slate-900 pb-1"
+                                 value={team.name}
+                                 onChange={(e) => setTeams(teams.map(t => t.id === team.id ? { ...t, name: e.target.value } : t))}
+                               />
+                               <div className="grid grid-cols-2 gap-3">
+                                  <div>
+                                     <label className="text-xs font-bold text-slate-400 uppercase block mb-1">Head Coach</label>
+                                     <select 
+                                        className="w-full text-sm p-2 border border-slate-300 rounded-lg bg-white outline-none"
+                                        value={team.headCoachId}
+                                        onChange={(e) => handleUpdateTeamCoach(team.id, 'headCoachId', e.target.value)}
+                                     >
+                                        <option value="">Select...</option>
+                                        {eligibleHeadCoaches.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                     </select>
+                                  </div>
+                                  <div>
+                                     <label className="text-xs font-bold text-slate-400 uppercase block mb-1">Assistant</label>
+                                     <select 
+                                        className="w-full text-sm p-2 border border-slate-300 rounded-lg bg-white outline-none"
+                                        value={team.asstCoachId}
+                                        onChange={(e) => handleUpdateTeamCoach(team.id, 'asstCoachId', e.target.value)}
+                                     >
+                                        <option value="">Select...</option>
+                                        {coaches.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                     </select>
+                                  </div>
+                               </div>
+                            </div>
+                         )})}
+                      </div>
+                   </div>
+                )})}
+             </div>
+         )}
       </Card>
     </div>
   );
@@ -824,10 +913,16 @@ export default function App() {
 
       {schedule.length > 0 && (
          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm print:hidden">
-            <h4 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2"><Share className="w-4 h-4 text-blue-600" /> Export</h4>
+            <h4 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
+              <Share className="w-4 h-4 text-blue-600" /> Share & Export
+            </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
-                <Button variant="outline" className="w-full py-3" onClick={() => exportToICS()}><CalendarCheck className="w-4 h-4" /> Share Calendar (.ics)</Button>
-                <Button variant="outline" onClick={() => window.print()} className="w-full py-3"><Printer className="w-4 h-4" /> Print / PDF</Button>
+                <Button variant="outline" className="w-full py-3" onClick={() => exportToICS()}>
+                   <CalendarCheck className="w-4 h-4" /> Share Calendar (.ics)
+                </Button>
+                <Button variant="outline" onClick={() => window.print()} className="w-full py-3">
+                   <Download className="w-4 h-4" /> Print / PDF
+                </Button>
             </div>
             
             <div className="border-t border-slate-100 pt-4">
@@ -847,11 +942,20 @@ export default function App() {
       )}
 
       <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-         {schedule.length === 0 ? <div className="p-12 text-center text-slate-400"><Calendar className="w-12 h-12 mx-auto mb-4 opacity-30" /><p>No schedule yet.</p></div> : 
+         {schedule.length === 0 ? (
+            <div className="p-12 text-center text-slate-400">
+               <Calendar className="w-12 h-12 mx-auto mb-4 opacity-30" />
+               <p>No schedule yet.</p>
+            </div>
+         ) : (
             <div className="overflow-x-auto">
                <table className="w-full text-sm text-left">
                   <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-100">
-                     <tr><th className="p-4 min-w-[120px]">Time</th><th className="p-4">Matchup</th><th className="p-4 hidden md:table-cell">Field</th></tr>
+                     <tr>
+                        <th className="p-4 min-w-[120px]">Time</th>
+                        <th className="p-4">Matchup</th>
+                        <th className="p-4 hidden md:table-cell">Field</th>
+                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                      {schedule.map((game) => (
@@ -865,15 +969,19 @@ export default function App() {
                              <div className="font-medium text-slate-900 text-base">{game.teamA.name}</div>
                              <div className="text-xs text-slate-400 my-0.5">vs</div>
                              <div className="font-medium text-slate-900 text-base">{game.teamB.name}</div>
-                             <div className="mt-2 text-xs text-slate-500 bg-slate-100 inline-block px-2 py-0.5 rounded">{ageGroups.find(g => g.id === game.groupId)?.name}</div>
+                             <div className="mt-2 text-xs text-slate-500 bg-slate-100 inline-block px-2 py-0.5 rounded">
+                                {ageGroups.find(g => g.id === game.groupId)?.name}
+                             </div>
                           </td>
-                          <td className="p-4 hidden md:table-cell align-top text-slate-600">{game.fieldName}</td>
+                          <td className="p-4 hidden md:table-cell align-top text-slate-600">
+                             {game.fieldName}
+                          </td>
                        </tr>
                      ))}
                   </tbody>
                </table>
             </div>
-         }
+         )}
       </div>
     </div>
   );
@@ -922,13 +1030,18 @@ export default function App() {
           <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><Save className="w-5 h-5 text-blue-600" /> Saved Schedules</h3>
           <Button onClick={saveSchedule}><Plus className="w-4 h-4" /> Save Current</Button>
         </div>
-        {savedSchedules.length === 0 ? <p className="text-slate-400 text-center py-8">No saved schedules found.</p> : 
+        
+        {savedSchedules.length === 0 ? (
+          <p className="text-slate-400 text-center py-8">No saved schedules found.</p>
+        ) : (
           <div className="space-y-3">
             {savedSchedules.map(save => (
               <div key={save.id} className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex items-center justify-between">
                 <div>
                   <h4 className="font-bold text-slate-900">{save.name}</h4>
-                  <p className="text-xs text-slate-500 mt-1">{save.createdAt?.toDate ? save.createdAt.toDate().toLocaleDateString() : (save.createdAt || 'Local Save')} • {save.schedule?.length || 0} games</p>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {new Date(save.createdAt).toLocaleDateString()} • {save.schedule?.length || 0} games
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <Button variant="secondary" className="px-3 py-1.5 text-xs" onClick={() => loadSchedule(save)}>Load</Button>
@@ -937,8 +1050,13 @@ export default function App() {
               </div>
             ))}
           </div>
-        }
+        )}
       </Card>
+      
+      <div className="p-4 bg-slate-100 text-slate-500 rounded-xl text-sm flex gap-2 items-start">
+         <WifiOff className="w-4 h-4 mt-0.5 shrink-0" />
+         <p>Using <strong>Offline Storage</strong>. Schedules are saved only on this device. If you delete the app or clear cache, data will be lost.</p>
+      </div>
     </div>
   );
 
@@ -966,11 +1084,23 @@ export default function App() {
       <header className="flex-none bg-white/80 backdrop-blur-md border-b border-slate-200 z-20 print:hidden">
         <div className="max-w-6xl mx-auto px-4 h-14 md:h-16 flex items-center justify-between">
            <div className="flex items-center gap-2.5">
-              <div className="bg-blue-600 p-1.5 rounded-lg text-white"><CalendarIcon className="w-5 h-5" /></div>
-              <h1 className="font-bold text-lg md:text-xl tracking-tight text-slate-800">LeagueScheduler<span className="text-blue-600">Pro</span></h1>
+              <div className="bg-blue-600 p-1.5 rounded-lg text-white">
+                <CalendarIcon className="w-5 h-5" />
+              </div>
+              <h1 className="font-bold text-lg md:text-xl tracking-tight text-slate-800">
+                LeagueScheduler<span className="text-blue-600">Pro</span>
+              </h1>
            </div>
+           
+           {/* Desktop Only Button */}
            <div className="hidden md:block">
-             {activeTab === 'schedule' ? <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating}>Regenerate</Button> : activeTab !== 'saves' && activeTab !== 'team-schedules' ? <Button onClick={generateSchedule} disabled={isGenerating}>{isGenerating ? 'Working...' : 'Generate'} <ChevronRight className="w-4 h-4" /></Button> : null}
+             {activeTab === 'schedule' ? (
+                <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating}>Regenerate</Button>
+             ) : activeTab !== 'saves' && activeTab !== 'team-schedules' ? (
+               <Button onClick={generateSchedule} disabled={isGenerating}>
+                 {isGenerating ? 'Working...' : 'Generate'} <ChevronRight className="w-4 h-4" />
+               </Button>
+             ) : null}
            </div>
         </div>
       </header>
@@ -982,14 +1112,25 @@ export default function App() {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
               return (
-                <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-all border ${isActive ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' : 'bg-white text-slate-500 border-slate-200'}`}><Icon className="w-4 h-4" />{tab.label}</button>
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-all border ${
+                    isActive 
+                      ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' 
+                      : 'bg-white text-slate-500 border-slate-200'
+                  }`}
+                >
+                  <Icon className="w-4 h-4" />
+                  {tab.label}
+                </button>
               )
             })}
           </div>
 
           <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
              {activeTab === 'setup' && renderSetup()}
-             {activeTab === 'fields' && renderFields()}
+             {activeTab === 'fields' && <div className="space-y-6">{renderAgeGroups()}{renderFields()}</div>}
              {activeTab === 'coaches' && renderCoaches()}
              {activeTab === 'schedule' && renderSchedule()}
              {activeTab === 'team-schedules' && renderTeamSchedules()}
@@ -1000,7 +1141,15 @@ export default function App() {
 
       {activeTab !== 'saves' && activeTab !== 'team-schedules' && (
         <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)] print:hidden">
-           {activeTab !== 'schedule' ? <Button onClick={generateSchedule} disabled={isGenerating} fullWidth className="bg-blue-600 text-white shadow-lg shadow-blue-200 py-3.5 text-lg">{isGenerating ? 'Working...' : 'Generate Schedule'}</Button> : <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating} fullWidth className="py-3.5 text-lg border-2">Regenerate Schedule</Button>}
+           {activeTab !== 'schedule' ? (
+             <Button onClick={generateSchedule} disabled={isGenerating} fullWidth className="bg-blue-600 text-white shadow-lg shadow-blue-200 py-3.5 text-lg">
+               {isGenerating ? 'Working...' : 'Generate Schedule'}
+             </Button>
+           ) : (
+              <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating} fullWidth className="py-3.5 text-lg border-2">
+                 Regenerate Schedule
+              </Button>
+           )}
         </div>
       )}
     </div>

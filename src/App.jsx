@@ -514,6 +514,8 @@ export default function App() {
     const teamWeeklyGames = {};
     const teamWeeklyWeekdayGames = {};
     const teamWeeklyWeekendGames = {}; // NEW
+    const teamSeasonWeekdayGames = {}; // NEW: Total Count
+    const teamSeasonWeekendGames = {}; // NEW: Total Count
     const matchupHistory = {};
     const coachIntervals = {}; 
     const GAP_BUFFER_MINS = 30;
@@ -589,6 +591,7 @@ export default function App() {
           
           // Use strictWeekday flag to enforce distribution
           if (strictMode.strictWeekday) {
+              // Enforce specific Weekday/Weekend counts based on Age Group settings
               if (isWeekday) {
                   if (tA_WW >= limitWeekday || tB_WW >= limitWeekday) continue;
               } else {
@@ -633,9 +636,17 @@ export default function App() {
                 if (isWeekday) {
                    teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
                    teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
+                   
+                   // Update Season Counters
+                   teamSeasonWeekdayGames[game.teamA.id] = (teamSeasonWeekdayGames[game.teamA.id] || 0) + 1;
+                   teamSeasonWeekdayGames[game.teamB.id] = (teamSeasonWeekdayGames[game.teamB.id] || 0) + 1;
                 } else {
                    teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
                    teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
+                   
+                   // Update Season Counters
+                   teamSeasonWeekendGames[game.teamA.id] = (teamSeasonWeekendGames[game.teamA.id] || 0) + 1;
+                   teamSeasonWeekendGames[game.teamB.id] = (teamSeasonWeekendGames[game.teamB.id] || 0) + 1;
                 }
                 
                 let homeTeam, awayTeam;

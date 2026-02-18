@@ -87,7 +87,7 @@ const generateDates = (start, end, blackoutPeriods, weeklySchedule) => {
 
   while (current <= endDate) {
     const day = current.getDay(); 
-    const scheduleForDay = weeklySchedule[day];
+    const scheduleForDay = weeklySchedule && weeklySchedule[day];
 
     let isBlackout = false;
     for (const period of normalizedBlackouts) {
@@ -181,11 +181,14 @@ export default function App() {
     endDate: '', 
     blackoutPeriods: [] // Array of { id, start, end }
   });
-  const [weeklySchedule, setWeeklySchedule] = useState({
+  // Default weekly schedule
+  const defaultWeeklySchedule = {
     0: { active: false, times: '' }, 1: { active: false, times: '' }, 2: { active: false, times: '' },
     3: { active: false, times: '' }, 4: { active: false, times: '' }, 5: { active: false, times: '' },
     6: { active: false, times: '' }
-  });
+  };
+  const [weeklySchedule, setWeeklySchedule] = useState(defaultWeeklySchedule);
+  
   const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const [ageGroups, setAgeGroups] = useState([]);
   const [fields, setFields] = useState([]);
@@ -257,7 +260,6 @@ export default function App() {
   const loadSchedule = (save) => {
     if (!confirm("Load this schedule? Unsaved changes will be lost.")) return;
     
-    // Migration Logic: Convert old single blackout to new array format if needed
     const config = save.seasonConfig || {};
     if (config.blackoutStart && (!config.blackoutPeriods || config.blackoutPeriods.length === 0)) {
         config.blackoutPeriods = [{
@@ -269,8 +271,16 @@ export default function App() {
     if (!config.blackoutPeriods) config.blackoutPeriods = [];
 
     setSeasonConfig(config);
-    setWeeklySchedule(save.weeklySchedule || {});
-    setAgeGroups(save.ageGroups || []);
+    setWeeklySchedule({ ...defaultWeeklySchedule, ...(save.weeklySchedule || {}) });
+    
+    // Migrate Age Groups to include new max fields if missing
+    const migratedGroups = (save.ageGroups || []).map(g => ({
+        ...g,
+        maxWeekday: g.maxWeekday !== undefined ? g.maxWeekday : 1,
+        maxWeekend: g.maxWeekend !== undefined ? g.maxWeekend : 2
+    }));
+    setAgeGroups(migratedGroups);
+
     setFields(save.fields || []);
     setCoaches(save.coaches || []);
     setTeams(save.teams || []);
@@ -431,13 +441,11 @@ export default function App() {
   const runSchedulingAlgorithm = () => {
     if (!seasonConfig.startDate || !seasonConfig.endDate) throw new Error("Set Season Start/End dates.");
     
-    // Updated call to generateDates using new blackoutPeriods array
     const calendarDays = generateDates(
       seasonConfig.startDate, 
       seasonConfig.endDate, 
-      seasonConfig.blackoutPeriods, // Passing array here
-      null, // old single end param placeholder not needed but maintaining sig
-      weeklySchedule
+      seasonConfig.blackoutPeriods, 
+      weeklySchedule 
     );
     
     if (calendarDays.length === 0) throw new Error("No valid dates found.");
@@ -449,7 +457,7 @@ export default function App() {
       const groupTeams = teams.filter(t => t.groupId === group.id);
       if (groupTeams.length < 2) return;
 
-      const gamesNeeded = Number(group.gamesPerTeam);
+      const gamesNeeded = Number(group.gamesPerTeam) || 0;
       
       const teamIndices = groupTeams.map((_, i) => i);
       if (teamIndices.length % 2 !== 0) teamIndices.push(-1); 
@@ -473,16 +481,21 @@ export default function App() {
       }
 
       let finalMatchups = [];
-      for (let i = 0; i < gamesNeeded; i++) {
-         const r = rounds[i % rounds.length];
-         r.forEach(match => {
-            finalMatchups.push({
-               id: `g-${gameIdCounter++}`, 
-               groupId: group.id, 
-               teamA: match.teamA, 
-               teamB: match.teamB 
-            });
-         });
+      if (rounds.length > 0) {
+        for (let i = 0; i < gamesNeeded; i++) {
+           const r = rounds[i % rounds.length];
+           // Safety Check: Ensure round exists
+           if (r) {
+             r.forEach(match => {
+                finalMatchups.push({
+                   id: `g-${gameIdCounter++}`, 
+                   groupId: group.id, 
+                   teamA: match.teamA, 
+                   teamB: match.teamB 
+                });
+             });
+           }
+        }
       }
 
       allGames = [...allGames, ...finalMatchups];
@@ -500,6 +513,7 @@ export default function App() {
     const teamDailyGames = {};
     const teamWeeklyGames = {};
     const teamWeeklyWeekdayGames = {};
+    const teamWeeklyWeekendGames = {}; // NEW
     const matchupHistory = {};
     const coachIntervals = {}; 
     const GAP_BUFFER_MINS = 30;
@@ -540,6 +554,10 @@ export default function App() {
        const groupConfig = ageGroups.find(g => g.id === game.groupId);
        const maxGamesPerWeek = Number(groupConfig?.gamesPerWeek) || 2;
        const durationMins = Number(groupConfig?.duration) || 90;
+       
+       // New Config Limits
+       const limitWeekday = Number(groupConfig?.maxWeekday) !== undefined ? Number(groupConfig.maxWeekday) : 1;
+       const limitWeekend = Number(groupConfig?.maxWeekend) !== undefined ? Number(groupConfig.maxWeekend) : 2;
 
        for (let day of calendarDays) {
           const weekId = getWeekIdentifier(day.dateObj);
@@ -566,8 +584,17 @@ export default function App() {
           const isWeekday = day.dayOfWeek >= 1 && day.dayOfWeek <= 5;
           const tA_WW = teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] || 0;
           const tB_WW = teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] || 0;
+          const tA_WE = teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] || 0;
+          const tB_WE = teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] || 0;
           
-          if (strictMode.strictWeekday && isWeekday && (maxGamesPerWeek === 1 || tA_WW >= 1 || tB_WW >= 1)) continue;
+          // Use strictWeekday flag to enforce distribution
+          if (strictMode.strictWeekday) {
+              if (isWeekday) {
+                  if (tA_WW >= limitWeekday || tB_WW >= limitWeekday) continue;
+              } else {
+                  if (tA_WE >= limitWeekend || tB_WE >= limitWeekend) continue;
+              }
+          }
           
           const tA_W = teamWeeklyGames[`${weekId}|${game.teamA.id}`] || 0;
           const tB_W = teamWeeklyGames[`${weekId}|${game.teamB.id}`] || 0;
@@ -606,6 +633,9 @@ export default function App() {
                 if (isWeekday) {
                    teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
                    teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
+                } else {
+                   teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
+                   teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
                 }
                 
                 let homeTeam, awayTeam;
@@ -807,7 +837,7 @@ export default function App() {
           <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
             <Users className="w-5 h-5 text-blue-600" /> Age Groups
           </h3>
-          <Button variant="secondary" onClick={() => setAgeGroups([...ageGroups, { id: Date.now(), name: 'New Group', teamsCount: 4, gamesPerTeam: 8, gamesPerWeek: 1, duration: 90 }])}>
+          <Button variant="secondary" onClick={() => setAgeGroups([...ageGroups, { id: Date.now(), name: 'New Group', teamsCount: 4, gamesPerTeam: 8, gamesPerWeek: 1, maxWeekday: 1, maxWeekend: 2, duration: 90 }])}>
             <Plus className="w-4 h-4" /> Add
           </Button>
         </div>
@@ -831,9 +861,10 @@ export default function App() {
                         <Input label="Teams" type="number" min="2" value={group.teamsCount} onChange={e => { const n=[...ageGroups]; n[idx].teamsCount=parseInt(e.target.value)||0; setAgeGroups(n); }} />
                         <Input label="Games/Tm" type="number" min="1" value={group.gamesPerTeam} onChange={e => { const n=[...ageGroups]; n[idx].gamesPerTeam=parseInt(e.target.value)||0; setAgeGroups(n); }} />
                      </div>
-                     <div className="grid grid-cols-2 gap-3">
-                        <Input label="Games/Wk" type="number" min="1" value={group.gamesPerWeek || 2} onChange={e => { const n=[...ageGroups]; n[idx].gamesPerWeek=parseInt(e.target.value)||0; setAgeGroups(n); }} />
-                        <Input label="Mins" type="number" min="30" value={group.duration || 90} onChange={e => { const n=[...ageGroups]; n[idx].duration=parseInt(e.target.value)||90; setAgeGroups(n); }} />
+                     <div className="grid grid-cols-3 gap-2">
+                        <Input label="Wkday/Wk" type="number" min="0" value={group.maxWeekday !== undefined ? group.maxWeekday : 1} onChange={e => { const n=[...ageGroups]; n[idx].maxWeekday=parseInt(e.target.value)||0; setAgeGroups(n); }} />
+                        <Input label="Wkend/Wk" type="number" min="0" value={group.maxWeekend !== undefined ? group.maxWeekend : 2} onChange={e => { const n=[...ageGroups]; n[idx].maxWeekend=parseInt(e.target.value)||0; setAgeGroups(n); }} />
+                        <Input label="Duration" type="number" min="30" value={group.duration || 90} onChange={e => { const n=[...ageGroups]; n[idx].duration=parseInt(e.target.value)||90; setAgeGroups(n); }} />
                      </div>
                   </div>
                </div>
@@ -1013,14 +1044,23 @@ export default function App() {
   const renderSchedule = () => (
     <div className="space-y-6">
       {scheduleStats && (
-        <div className={`p-4 rounded-xl flex items-start gap-3 ${scheduleStats.unscheduled > 0 ? 'bg-amber-50 text-amber-800 border border-amber-100' : 'bg-green-50 text-green-800 border border-green-100'}`}>
-          {scheduleStats.unscheduled > 0 ? <AlertCircle className="w-5 h-5 shrink-0" /> : <CheckCircle className="w-5 h-5 shrink-0" />}
-          <div>
-            <p className="font-bold">{scheduleStats.message}</p>
-            <p className="text-sm opacity-80">
-              Scheduled {scheduleStats.scheduled} / {scheduleStats.totalGames} games.
-            </p>
+        <div className={`p-4 rounded-xl flex flex-col gap-3 ${scheduleStats.unscheduled > 0 ? 'bg-amber-50 text-amber-800 border border-amber-100' : 'bg-green-50 text-green-800 border border-green-100'}`}>
+          <div className="flex items-center gap-3">
+             {scheduleStats.unscheduled > 0 ? <AlertCircle className="w-5 h-5 shrink-0" /> : <CheckCircle className="w-5 h-5 shrink-0" />}
+             <div>
+               <p className="font-bold">Scheduled {scheduleStats.scheduled} / {scheduleStats.totalGames} games</p>
+             </div>
           </div>
+          {scheduleStats.unscheduledDetails && scheduleStats.unscheduledDetails.length > 0 && (
+              <div className="mt-2 text-xs bg-white/50 p-2 rounded max-h-32 overflow-y-auto">
+                  <p className="font-bold mb-1">Unscheduled Games:</p>
+                  {scheduleStats.unscheduledDetails.map((g, i) => (
+                      <div key={i} className="mb-1 border-b border-black/5 pb-1">
+                          {g.teamA.name} vs {g.teamB.name}: <span className="font-semibold">{g.reason}</span>
+                      </div>
+                  ))}
+              </div>
+          )}
         </div>
       )}
 
@@ -1030,7 +1070,7 @@ export default function App() {
               <Download className="w-4 h-4 text-blue-600" /> Export Options
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
-                <Button variant="outline" className="w-full py-3" onClick={exportToICS}>
+                <Button variant="outline" className="w-full py-3" onClick={() => exportToICS()}>
                    <CalendarCheck className="w-4 h-4" /> Save to Calendar (.ics)
                 </Button>
                 <Button variant="outline" onClick={() => window.print()} className="w-full py-3">
@@ -1170,12 +1210,10 @@ export default function App() {
         )}
       </Card>
       
-      {!storage.isFirebase && (
-         <div className="p-4 bg-slate-100 text-slate-500 rounded-xl text-sm flex gap-2 items-start">
-            <WifiOff className="w-4 h-4 mt-0.5 shrink-0" />
-            <p>Using <strong>Offline Storage</strong>. Schedules are saved only on this device. If you delete the app or clear cache, data will be lost.</p>
-         </div>
-      )}
+      <div className="p-4 bg-slate-100 text-slate-500 rounded-xl text-sm flex gap-2 items-start">
+         <WifiOff className="w-4 h-4 mt-0.5 shrink-0" />
+         <p>Using <strong>Offline Storage</strong>. Schedules are saved only on this device. If you delete the app or clear cache, data will be lost.</p>
+      </div>
     </div>
   );
 

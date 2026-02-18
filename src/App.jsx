@@ -67,7 +67,7 @@ const timeToMins = (timeStr) => {
   return h * 60 + m;
 };
 
-const generateDates = (start, end, blackoutStart, blackoutEnd, weeklySchedule) => {
+const generateDates = (start, end, blackoutPeriods, weeklySchedule) => {
   if (!start || !end) return [];
   
   const dates = [];
@@ -76,18 +76,28 @@ const generateDates = (start, end, blackoutStart, blackoutEnd, weeklySchedule) =
   current.setHours(0,0,0,0);
   endDate.setHours(0,0,0,0);
   
-  const bStart = blackoutStart ? new Date(blackoutStart) : null;
-  const bEnd = blackoutEnd ? new Date(blackoutEnd) : null;
-  if(bStart) bStart.setHours(0,0,0,0);
-  if(bEnd) bEnd.setHours(0,0,0,0);
+  // Normalize blackout periods for easy comparison
+  const normalizedBlackouts = (blackoutPeriods || []).map(p => {
+    const s = new Date(p.start);
+    const e = new Date(p.end);
+    s.setHours(0,0,0,0);
+    e.setHours(0,0,0,0);
+    return { start: s, end: e };
+  });
 
   while (current <= endDate) {
     const day = current.getDay(); 
     const scheduleForDay = weeklySchedule[day];
 
     let isBlackout = false;
-    if (bStart && bEnd) {
-      if (current >= bStart && current <= bEnd) isBlackout = true;
+    for (const period of normalizedBlackouts) {
+      // Check if valid dates are provided for this period
+      if (period.start && period.end && !isNaN(period.start) && !isNaN(period.end)) {
+         if (current >= period.start && current <= period.end) {
+             isBlackout = true;
+             break;
+         }
+      }
     }
 
     if (scheduleForDay && scheduleForDay.active && !isBlackout) {
@@ -165,7 +175,12 @@ export default function App() {
   const [savedSchedules, setSavedSchedules] = useState([]);
   
   // App State
-  const [seasonConfig, setSeasonConfig] = useState({ startDate: '', endDate: '', blackoutStart: '', blackoutEnd: '' });
+  // Changed seasonConfig to array of blackout periods
+  const [seasonConfig, setSeasonConfig] = useState({ 
+    startDate: '', 
+    endDate: '', 
+    blackoutPeriods: [] // Array of { id, start, end }
+  });
   const [weeklySchedule, setWeeklySchedule] = useState({
     0: { active: false, times: '' }, 1: { active: false, times: '' }, 2: { active: false, times: '' },
     3: { active: false, times: '' }, 4: { active: false, times: '' }, 5: { active: false, times: '' },
@@ -181,7 +196,7 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [newCoachName, setNewCoachName] = useState('');
   
-  // NEW: External Conflicts State
+  // External Conflicts State
   const [externalConflicts, setExternalConflicts] = useState([]);
 
   // --- Effects ---
@@ -241,7 +256,19 @@ export default function App() {
 
   const loadSchedule = (save) => {
     if (!confirm("Load this schedule? Unsaved changes will be lost.")) return;
-    setSeasonConfig(save.seasonConfig || {});
+    
+    // Migration Logic: Convert old single blackout to new array format if needed
+    const config = save.seasonConfig || {};
+    if (config.blackoutStart && (!config.blackoutPeriods || config.blackoutPeriods.length === 0)) {
+        config.blackoutPeriods = [{
+            id: Date.now(),
+            start: config.blackoutStart,
+            end: config.blackoutEnd
+        }];
+    }
+    if (!config.blackoutPeriods) config.blackoutPeriods = [];
+
+    setSeasonConfig(config);
     setWeeklySchedule(save.weeklySchedule || {});
     setAgeGroups(save.ageGroups || []);
     setFields(save.fields || []);
@@ -403,7 +430,16 @@ export default function App() {
 
   const runSchedulingAlgorithm = () => {
     if (!seasonConfig.startDate || !seasonConfig.endDate) throw new Error("Set Season Start/End dates.");
-    const calendarDays = generateDates(seasonConfig.startDate, seasonConfig.endDate, seasonConfig.blackoutStart, seasonConfig.blackoutEnd, weeklySchedule);
+    
+    // Updated call to generateDates using new blackoutPeriods array
+    const calendarDays = generateDates(
+      seasonConfig.startDate, 
+      seasonConfig.endDate, 
+      seasonConfig.blackoutPeriods, // Passing array here
+      null, // old single end param placeholder not needed but maintaining sig
+      weeklySchedule
+    );
+    
     if (calendarDays.length === 0) throw new Error("No valid dates found.");
     
     let allGames = [], gameIdCounter = 1;
@@ -471,7 +507,7 @@ export default function App() {
     const matchupSides = {};
     const teamHomeCounts = {};
 
-    // NEW: Load External Conflicts into Coach Intervals
+    // Load External Conflicts into Coach Intervals
     externalConflicts.forEach(conf => {
       const start = timeToMins(conf.timeStr);
       const end = start + conf.duration;
@@ -680,13 +716,54 @@ export default function App() {
           <Input label="Season End" type="date" value={seasonConfig.endDate} onChange={e => setSeasonConfig({...seasonConfig, endDate: e.target.value})} />
         </div>
         <div className="mt-6 pt-6 border-t border-slate-100">
-           <h4 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-            <Shield className="w-4 h-4 text-orange-500" /> Blackout Week (Optional)
-           </h4>
-           <div className="grid gap-4">
-            <Input label="Start Date" type="date" value={seasonConfig.blackoutStart} onChange={e => setSeasonConfig({...seasonConfig, blackoutStart: e.target.value})} />
-            <Input label="End Date" type="date" value={seasonConfig.blackoutEnd} onChange={e => setSeasonConfig({...seasonConfig, blackoutEnd: e.target.value})} />
-          </div>
+           <div className="flex justify-between items-center mb-4">
+               <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                <Shield className="w-4 h-4 text-orange-500" /> Blackout Weeks (Optional)
+               </h4>
+               <Button variant="secondary" className="px-2 py-1 text-xs" onClick={() => setSeasonConfig({
+                   ...seasonConfig, 
+                   blackoutPeriods: [...(seasonConfig.blackoutPeriods || []), { id: Date.now(), start: '', end: '' }]
+               })}>
+                   <Plus className="w-3 h-3" /> Add Period
+               </Button>
+           </div>
+           
+           <div className="space-y-3">
+            {(seasonConfig.blackoutPeriods || []).length === 0 && (
+                <p className="text-xs text-slate-400 italic">No blackout periods set (e.g. Spring Break).</p>
+            )}
+            {(seasonConfig.blackoutPeriods || []).map((period, idx) => (
+                <div key={period.id} className="grid grid-cols-12 gap-2 items-end">
+                    <div className="col-span-5">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">Start</label>
+                        <Input type="date" value={period.start} onChange={e => {
+                            const newPeriods = [...seasonConfig.blackoutPeriods];
+                            newPeriods[idx].start = e.target.value;
+                            setSeasonConfig({...seasonConfig, blackoutPeriods: newPeriods});
+                        }} />
+                    </div>
+                    <div className="col-span-5">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase">End</label>
+                        <Input type="date" value={period.end} onChange={e => {
+                            const newPeriods = [...seasonConfig.blackoutPeriods];
+                            newPeriods[idx].end = e.target.value;
+                            setSeasonConfig({...seasonConfig, blackoutPeriods: newPeriods});
+                        }} />
+                    </div>
+                    <div className="col-span-2 pb-1">
+                        <button 
+                            onClick={() => {
+                                const newPeriods = seasonConfig.blackoutPeriods.filter(p => p.id !== period.id);
+                                setSeasonConfig({...seasonConfig, blackoutPeriods: newPeriods});
+                            }}
+                            className="p-2 text-slate-400 hover:text-red-500 bg-slate-50 rounded-lg border border-slate-200"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+            ))}
+           </div>
         </div>
       </Card>
 
@@ -698,12 +775,23 @@ export default function App() {
             {daysOfWeek.map((dayName, idx) => (
                <div key={idx} className="flex flex-col gap-2">
                   <label className="flex items-center gap-3 cursor-pointer select-none">
-                     <input type="checkbox" checked={weeklySchedule[idx].active} onChange={() => toggleDayActive(idx)} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
-                     <span className={`font-medium text-base ${weeklySchedule[idx].active ? 'text-slate-900' : 'text-slate-400'}`}>{dayName}</span>
+                     <input 
+                        type="checkbox" 
+                        checked={weeklySchedule[idx].active} 
+                        onChange={() => toggleDayActive(idx)}
+                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
+                     />
+                     <span className={`font-medium text-base ${weeklySchedule[idx].active ? 'text-slate-900' : 'text-slate-400'}`}>
+                        {dayName}
+                     </span>
                   </label>
                   {weeklySchedule[idx].active && (
                      <div className="pl-8">
-                       <Input placeholder="e.g. 09:00, 11:00 (24h)" value={weeklySchedule[idx].times} onChange={(e) => updateDayTimes(idx, e.target.value)} />
+                       <Input 
+                          placeholder="e.g. 09:00, 11:00 (24h)"
+                          value={weeklySchedule[idx].times}
+                          onChange={(e) => updateDayTimes(idx, e.target.value)}
+                       />
                      </div>
                   )}
                </div>
@@ -923,262 +1011,4 @@ export default function App() {
   );
 
   const renderSchedule = () => (
-    <div className="space-y-6">
-      {scheduleStats && (
-        <div className={`p-4 rounded-xl flex flex-col gap-3 ${scheduleStats.unscheduled > 0 ? 'bg-amber-50 text-amber-800 border border-amber-100' : 'bg-green-50 text-green-800 border border-green-100'}`}>
-          <div className="flex items-center gap-3">
-             {scheduleStats.unscheduled > 0 ? <AlertCircle className="w-5 h-5 shrink-0" /> : <CheckCircle className="w-5 h-5 shrink-0" />}
-             <div>
-               <p className="font-bold">Scheduled {scheduleStats.scheduled} / {scheduleStats.totalGames} games</p>
-             </div>
-          </div>
-          {scheduleStats.unscheduledDetails && scheduleStats.unscheduledDetails.length > 0 && (
-              <div className="mt-2 text-xs bg-white/50 p-2 rounded max-h-32 overflow-y-auto">
-                  <p className="font-bold mb-1">Unscheduled Games:</p>
-                  {scheduleStats.unscheduledDetails.map((g, i) => (
-                      <div key={i} className="mb-1 border-b border-black/5 pb-1">
-                          {g.teamA.name} vs {g.teamB.name}: <span className="font-semibold">{g.reason}</span>
-                      </div>
-                  ))}
-              </div>
-          )}
-        </div>
-      )}
-
-      {schedule.length > 0 && (
-         <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
-            <h4 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
-              <Download className="w-4 h-4 text-blue-600" /> Export Options
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
-                <Button variant="outline" className="w-full py-3" onClick={() => exportToICS()}>
-                   <CalendarCheck className="w-4 h-4" /> Save to Calendar (.ics)
-                </Button>
-                <Button variant="outline" onClick={() => window.print()} className="w-full py-3">
-                   <Download className="w-4 h-4" /> Print / PDF
-                </Button>
-            </div>
-            
-            <div className="border-t border-slate-100 pt-4">
-                <h5 className="text-xs font-bold text-slate-400 uppercase mb-3">GameChanger (CSV)</h5>
-                <div className="flex flex-wrap gap-2">
-                   <Button variant="secondary" className="text-xs py-1.5" onClick={() => exportToGameChanger(null)}>
-                      All
-                   </Button>
-                   {ageGroups.map(group => (
-                      <Button key={group.id} variant="secondary" className="text-xs py-1.5" onClick={() => exportToGameChanger(group.id)}>
-                         {group.name}
-                      </Button>
-                   ))}
-                </div>
-            </div>
-         </div>
-      )}
-
-      <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-         {schedule.length === 0 ? (
-            <div className="p-12 text-center text-slate-400">
-               <Calendar className="w-12 h-12 mx-auto mb-4 opacity-30" />
-               <p>No schedule yet.</p>
-            </div>
-         ) : (
-            <div className="overflow-x-auto">
-               <table className="w-full text-sm text-left">
-                  <thead className="bg-slate-50 text-slate-700 font-semibold border-b border-slate-100">
-                     <tr>
-                        <th className="p-4 min-w-[120px]">Time</th>
-                        <th className="p-4">Matchup</th>
-                        <th className="p-4 hidden md:table-cell">Field</th>
-                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                     {schedule.map((game) => (
-                       <tr key={game.id} className="hover:bg-slate-50 transition-colors">
-                          <td className="p-4 align-top">
-                             <div className="font-bold text-slate-900">{game.displayDate}</div>
-                             <div className="text-slate-500">{game.time}</div>
-                             <div className="md:hidden text-xs font-semibold text-blue-600 mt-1">{game.fieldName}</div>
-                          </td>
-                          <td className="p-4 align-top">
-                             <div className="font-medium text-slate-900 text-base">{game.teamA.name}</div>
-                             <div className="text-xs text-slate-400 my-0.5">vs</div>
-                             <div className="font-medium text-slate-900 text-base">{game.teamB.name}</div>
-                             <div className="mt-2 text-xs text-slate-500 bg-slate-100 inline-block px-2 py-0.5 rounded">
-                                {ageGroups.find(g => g.id === game.groupId)?.name}
-                             </div>
-                          </td>
-                          <td className="p-4 hidden md:table-cell align-top text-slate-600">
-                             {game.fieldName}
-                          </td>
-                       </tr>
-                     ))}
-                  </tbody>
-               </table>
-            </div>
-         )}
-      </div>
-    </div>
-  );
-  
-  const renderTeamSchedules = () => (
-      <div className="space-y-6">
-          {teams.map(team => {
-              const teamGames = schedule.filter(g => g.teamA.id === team.id || g.teamB.id === team.id);
-              if(teamGames.length === 0) return null;
-              
-              return (
-                  <Card key={team.id} className="p-0">
-                      <div className="bg-slate-50 p-4 border-b border-slate-100">
-                          <h3 className="font-bold text-lg text-slate-800">{team.name}</h3>
-                          <p className="text-xs text-slate-500">{teamGames.length} Games Scheduled</p>
-                      </div>
-                      <div className="divide-y divide-slate-50">
-                          {teamGames.map(game => {
-                              const isHome = game.teamA.id === team.id;
-                              const opponent = isHome ? game.teamB : game.teamA;
-                              return (
-                                  <div key={game.id} className="p-4 flex justify-between items-center">
-                                      <div>
-                                          <div className="font-semibold text-slate-900">{game.displayDate} @ {game.time}</div>
-                                          <div className="text-xs text-slate-500">{game.fieldName}</div>
-                                      </div>
-                                      <div className="text-right">
-                                          <div className="text-xs font-bold text-slate-400 uppercase">{isHome ? 'VS' : 'AT'}</div>
-                                          <div className="font-medium text-blue-600">{opponent.name}</div>
-                                      </div>
-                                  </div>
-                              )
-                          })}
-                      </div>
-                  </Card>
-              )
-          })}
-          {schedule.length === 0 && <p className="text-center text-slate-400 py-8">Generate a schedule first.</p>}
-      </div>
-  );
-
-  const renderSaves = () => (
-    <div className="space-y-6">
-      <Card className="p-5">
-        <div className="flex justify-between items-center mb-6">
-          <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-            <Save className="w-5 h-5 text-blue-600" /> Saved Schedules
-          </h3>
-          <Button onClick={saveSchedule}>
-            <Plus className="w-4 h-4" /> Save Current
-          </Button>
-        </div>
-        
-        {savedSchedules.length === 0 ? (
-          <p className="text-slate-400 text-center py-8">No saved schedules found.</p>
-        ) : (
-          <div className="space-y-3">
-            {savedSchedules.map(save => (
-              <div key={save.id} className="bg-slate-50 border border-slate-200 p-4 rounded-xl flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-slate-900">{save.name}</h4>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {new Date(save.createdAt).toLocaleDateString()} • {save.schedule?.length || 0} games
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="secondary" className="px-3 py-1.5 text-xs" onClick={() => loadSchedule(save)}>Load</Button>
-                  <Button variant="danger" className="px-3 py-1.5 text-xs" onClick={() => deleteSchedule(save.id)}>Delete</Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-
-  const tabs = [
-    { id: 'setup', label: '1. Setup', icon: Calendar },
-    { id: 'fields', label: '2. Groups', icon: Users },
-    { id: 'coaches', label: '3. Teams', icon: UserCheck },
-    { id: 'schedule', label: '4. Schedule', icon: Settings },
-    { id: 'team-schedules', label: 'By Team', icon: Search },
-    { id: 'saves', label: 'Saves', icon: FolderOpen },
-  ];
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-32 md:pb-10">
-      {/* Header - Simplified for Mobile */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-20">
-        <div className="max-w-6xl mx-auto px-4 h-14 md:h-16 flex items-center justify-between">
-           <div className="flex items-center gap-2.5">
-              <div className="bg-blue-600 p-1.5 rounded-lg text-white">
-                <CalendarIcon className="w-5 h-5" />
-              </div>
-              <h1 className="font-bold text-lg md:text-xl tracking-tight text-slate-800">
-                LeagueScheduler<span className="text-blue-600">Pro</span>
-              </h1>
-           </div>
-           
-           {/* Desktop Only Button */}
-           <div className="hidden md:block">
-             {activeTab === 'schedule' ? (
-                <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating}>Regenerate</Button>
-             ) : activeTab !== 'saves' && activeTab !== 'team-schedules' ? (
-               <Button onClick={generateSchedule} disabled={isGenerating}>
-                 {isGenerating ? 'Working...' : 'Generate Schedule'} <ChevronRight className="w-4 h-4" />
-               </Button>
-             ) : null}
-           </div>
-        </div>
-      </header>
-
-      <main className="max-w-6xl mx-auto px-4 py-6">
-        
-        {/* Scrollable Mobile Tabs */}
-        <div className="flex overflow-x-auto no-scrollbar gap-2 mb-6 pb-2 -mx-4 px-4 md:mx-0 md:px-0 md:flex-wrap">
-          {tabs.map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-full text-sm font-bold whitespace-nowrap transition-all border ${
-                  isActive 
-                    ? 'bg-blue-600 text-white border-blue-600 shadow-md shadow-blue-200' 
-                    : 'bg-white text-slate-500 border-slate-200'
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            )
-          })}
-        </div>
-
-        {/* Content Area */}
-        <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-           {activeTab === 'setup' && renderSetup()}
-           {activeTab === 'fields' && <div className="space-y-6">{renderAgeGroups()}{renderFields()}</div>}
-           {activeTab === 'coaches' && renderCoaches()}
-           {activeTab === 'schedule' && renderSchedule()}
-           {activeTab === 'team-schedules' && renderTeamSchedules()}
-           {activeTab === 'saves' && renderSaves()}
-        </div>
-
-      </main>
-
-      {/* Mobile Sticky Footer Action Bar */}
-      {activeTab !== 'saves' && activeTab !== 'team-schedules' && (
-        <div className="md:hidden fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-slate-200 z-30 pb-[env(safe-area-inset-bottom)]">
-           {activeTab !== 'schedule' ? (
-             <Button onClick={generateSchedule} disabled={isGenerating} fullWidth className="bg-blue-600 text-white shadow-lg shadow-blue-200 py-3.5 text-lg">
-               {isGenerating ? 'Working...' : 'Generate Schedule'}
-             </Button>
-           ) : (
-              <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating} fullWidth className="py-3.5 text-lg border-2">
-                 Regenerate Schedule
-              </Button>
-           )}
-        </div>
-      )}
-    </div>
-  );
-}
+    <div className="space-y

@@ -9,7 +9,6 @@ import {
   Trash2, 
   AlertCircle, 
   CheckCircle, 
-  Calendar as CalendarIcon,
   Shield,
   UserCheck,
   Download,
@@ -452,7 +451,7 @@ export default function App() {
     
     let allGames = [], gameIdCounter = 1;
     
-    // --- MATCHUP GENERATION (ROUND ROBIN) ---
+    // --- MATCHUP GENERATION (ROUND ROBIN CYCLES) ---
     ageGroups.forEach(group => {
       const groupTeams = teams.filter(t => t.groupId === group.id);
       if (groupTeams.length < 2) return;
@@ -484,14 +483,17 @@ export default function App() {
       if (rounds.length > 0) {
         for (let i = 0; i < gamesNeeded; i++) {
            const r = rounds[i % rounds.length];
-           // Safety Check: Ensure round exists
+           // Calculate which "Cycle" this game is. Cycle 1 = first time through, Cycle 2 = first rematch
+           const cycle = Math.floor(i / rounds.length) + 1;
+           
            if (r) {
              r.forEach(match => {
                 finalMatchups.push({
                    id: `g-${gameIdCounter++}`, 
                    groupId: group.id, 
                    teamA: match.teamA, 
-                   teamB: match.teamB 
+                   teamB: match.teamB,
+                   cycle: cycle
                 });
              });
            }
@@ -501,27 +503,29 @@ export default function App() {
       allGames = [...allGames, ...finalMatchups];
     });
     
+    // Randomize slightly within their cycles
     allGames.sort(() => Math.random() - 0.5);
     
-    // --- MULTI-PASS SCHEDULER ---
-    
+    // --- STATE TRACKING ---
     const scheduledGames = [];
-    const unscheduledGames = [];
+    const pendingGames = [...allGames];
     
-    // State Tracking
-    const fieldOccupancy = new Set(); 
     const teamDailyGames = {};
     const teamWeeklyGames = {};
     const teamWeeklyWeekdayGames = {};
-    const teamWeeklyWeekendGames = {}; // NEW
-    const teamSeasonWeekdayGames = {}; // NEW: Total Count
-    const teamSeasonWeekendGames = {}; // NEW: Total Count
-    const matchupHistory = {};
+    const teamWeeklyWeekendGames = {};
+    const teamBusyTimes = {}; // Prevents double-booking
+    const matchupSides = {};
+    const teamHomeCounts = {};
     const coachIntervals = {}; 
     const GAP_BUFFER_MINS = 30;
     
-    const matchupSides = {};
-    const teamHomeCounts = {};
+    // Heuristic Tracking: Games left to schedule per team
+    const teamGamesLeft = {};
+    allGames.forEach(g => {
+        teamGamesLeft[g.teamA.id] = (teamGamesLeft[g.teamA.id] || 0) + 1;
+        teamGamesLeft[g.teamB.id] = (teamGamesLeft[g.teamB.id] || 0) + 1;
+    });
 
     // Load External Conflicts into Coach Intervals
     externalConflicts.forEach(conf => {
@@ -552,172 +556,170 @@ export default function App() {
       coachIntervals[key].push({ start: startMins, end: endMins });
     };
 
-    const attemptScheduleGame = (game, strictMode) => {
-       const groupConfig = ageGroups.find(g => g.id === game.groupId);
-       const maxGamesPerWeek = Number(groupConfig?.gamesPerWeek) || 2;
-       const durationMins = Number(groupConfig?.duration) || 90;
-       
-       // New Config Limits
-       const limitWeekday = Number(groupConfig?.maxWeekday) !== undefined ? Number(groupConfig.maxWeekday) : 1;
-       const limitWeekend = Number(groupConfig?.maxWeekend) !== undefined ? Number(groupConfig.maxWeekend) : 2;
-
-       for (let day of calendarDays) {
-          const weekId = getWeekIdentifier(day.dateObj);
-          
-          // 1. MATCHUP CHECK
-          const [yStr, wStr] = weekId.split('-');
-          const currentAbsWeek = parseInt(yStr) * 53 + parseInt(wStr);
-          const tIds = [game.teamA.id, game.teamB.id].sort();
-          const mKey = `${tIds[0]}|${tIds[1]}`;
-          const previousWeeks = matchupHistory[mKey] || [];
-          
-          let matchupConflict = false;
-          for (const prevW of previousWeeks) {
-              const diff = Math.abs(currentAbsWeek - prevW);
-              const limit = strictMode.strictMatchup ? 1 : 0;
-              if (diff <= limit) { 
-                  matchupConflict = true;
-                  break;
-              }
-          }
-          if (matchupConflict) continue;
-
-          // 2. TEAM LIMIT CHECKS
-          const isWeekday = day.dayOfWeek >= 1 && day.dayOfWeek <= 5;
-          const tA_WW = teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] || 0;
-          const tB_WW = teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] || 0;
-          const tA_WE = teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] || 0;
-          const tB_WE = teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] || 0;
-          
-          // Use strictWeekday flag to enforce distribution
-          if (strictMode.strictWeekday) {
-              // Enforce specific Weekday/Weekend counts based on Age Group settings
-              if (isWeekday) {
-                  if (tA_WW >= limitWeekday || tB_WW >= limitWeekday) continue;
-              } else {
-                  if (tA_WE >= limitWeekend || tB_WE >= limitWeekend) continue;
-              }
-          }
-          
-          const tA_W = teamWeeklyGames[`${weekId}|${game.teamA.id}`] || 0;
-          const tB_W = teamWeeklyGames[`${weekId}|${game.teamB.id}`] || 0;
-          const limit = strictMode.strictWeeklyMax ? maxGamesPerWeek : maxGamesPerWeek + 1;
-          if (tA_W >= limit || tB_W >= limit) continue;
-          
-          const tA_D = teamDailyGames[`${day.dateStr}|${game.teamA.id}`] || 0;
-          const tB_D = teamDailyGames[`${day.dateStr}|${game.teamB.id}`] || 0;
-          if (tA_D >= 1 || tB_D >= 1) continue; 
-
-          // 3. SLOT SEARCH
-          for (let time of day.slots) {
-             let placed = false;
-             for (let field of fields) {
-                if (fieldOccupancy.has(`${day.dateStr}|${time}|${field.id}`)) continue;
-                if (!fields.find(f => f.id === field.id).allowedGroups.includes(game.groupId)) continue;
-                
-                if (hasCoachConflict(game.teamA, game.teamB, day.dateStr, time, durationMins)) continue;
-
-                placed = true;
-                fieldOccupancy.add(`${day.dateStr}|${time}|${field.id}`);
-                
-                if (!matchupHistory[mKey]) matchupHistory[mKey] = [];
-                matchupHistory[mKey].push(currentAbsWeek);
-
-                const gameStart = timeToMins(time);
-                const gameEnd = gameStart + durationMins;
-                [game.teamA.headCoachId, game.teamA.asstCoachId, game.teamB.headCoachId, game.teamB.asstCoachId].filter(Boolean).forEach(cid => {
-                   addCoachInterval(cid, day.dateStr, gameStart, gameEnd);
-                });
-
-                teamDailyGames[`${day.dateStr}|${game.teamA.id}`] = (teamDailyGames[`${day.dateStr}|${game.teamA.id}`] || 0) + 1;
-                teamDailyGames[`${day.dateStr}|${game.teamB.id}`] = (teamDailyGames[`${day.dateStr}|${game.teamB.id}`] || 0) + 1;
-                teamWeeklyGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
-                teamWeeklyGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
-                if (isWeekday) {
-                   teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
-                   teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
-                   
-                   // Update Season Counters
-                   teamSeasonWeekdayGames[game.teamA.id] = (teamSeasonWeekdayGames[game.teamA.id] || 0) + 1;
-                   teamSeasonWeekdayGames[game.teamB.id] = (teamSeasonWeekdayGames[game.teamB.id] || 0) + 1;
-                } else {
-                   teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
-                   teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
-                   
-                   // Update Season Counters
-                   teamSeasonWeekendGames[game.teamA.id] = (teamSeasonWeekendGames[game.teamA.id] || 0) + 1;
-                   teamSeasonWeekendGames[game.teamB.id] = (teamSeasonWeekendGames[game.teamB.id] || 0) + 1;
-                }
-                
-                let homeTeam, awayTeam;
-                const lastHomeId = matchupSides[mKey];
-                
-                if (lastHomeId) {
-                    if (lastHomeId === game.teamA.id) { homeTeam = game.teamB; awayTeam = game.teamA; }
-                    else { homeTeam = game.teamA; awayTeam = game.teamB; }
-                } else {
-                    const c1 = teamHomeCounts[game.teamA.id] || 0;
-                    const c2 = teamHomeCounts[game.teamB.id] || 0;
-                    
-                    if (c1 < c2) { homeTeam = game.teamA; awayTeam = game.teamB; }
-                    else if (c2 < c1) { homeTeam = game.teamB; awayTeam = game.teamA; }
-                    else {
-                        if (Math.random() > 0.5) { homeTeam = game.teamA; awayTeam = game.teamB; }
-                        else { homeTeam = game.teamB; awayTeam = game.teamA; }
-                    }
-                }
-                
-                matchupSides[mKey] = homeTeam.id;
-                teamHomeCounts[homeTeam.id] = (teamHomeCounts[homeTeam.id] || 0) + 1;
-
-                scheduledGames.push({ 
-                  ...game, 
-                  teamA: homeTeam,
-                  teamB: awayTeam, 
-                  dateStr: day.dateStr, 
-                  displayDate: day.displayDate, 
-                  time, 
-                  fieldId: field.id, 
-                  fieldName: field.name 
-                });
-                return true;
-             }
-             if(placed) break;
-          }
-          if (scheduledGames.find(g => g.id === game.id)) break;
-       }
-       return scheduledGames.find(g => g.id === game.id);
-    };
-
-    let pendingGames = [...allGames];
-    let nextPassGames = [];
-    for (const game of pendingGames) {
-       if (!attemptScheduleGame(game, { strictMatchup: true, strictWeeklyMax: true, strictWeekday: true })) {
-          nextPassGames.push(game);
-       }
-    }
-
-    if (nextPassGames.length > 0) {
-        pendingGames = [...nextPassGames];
-        nextPassGames = [];
-        for (const game of pendingGames) {
-           if (!attemptScheduleGame(game, { strictMatchup: false, strictWeeklyMax: true, strictWeekday: true })) {
-              nextPassGames.push(game);
-           }
-        }
-    }
-
-    if (nextPassGames.length > 0) {
-        pendingGames = [...nextPassGames];
-        nextPassGames = [];
-        for (const game of pendingGames) {
-           if (!attemptScheduleGame(game, { strictMatchup: false, strictWeeklyMax: false, strictWeekday: false })) {
-              nextPassGames.push({ ...game, reason: 'No slots available (Coach/Field conflict)' });
-           }
-        }
-    }
+    // --- TIME SLOT ITERATION (DENSITY PACKING) ---
+    // Instead of picking a game and finding a slot, we pick a slot and find the BEST game for it.
     
-    unscheduledGames.push(...nextPassGames);
+    for (const day of calendarDays) {
+        const weekId = getWeekIdentifier(day.dateObj);
+        const isWeekday = day.dayOfWeek >= 1 && day.dayOfWeek <= 5;
+
+        for (const time of day.slots) {
+            const gameStart = timeToMins(time);
+
+            for (const field of fields) {
+                // Determine Minimum Cycle currently pending for every team
+                // This enforces: "Do not play a Cycle 2 game if you still have Cycle 1 games left"
+                const teamMinCycle = {};
+                for (const g of pendingGames) {
+                    teamMinCycle[g.teamA.id] = Math.min(teamMinCycle[g.teamA.id] || 999, g.cycle);
+                    teamMinCycle[g.teamB.id] = Math.min(teamMinCycle[g.teamB.id] || 999, g.cycle);
+                }
+
+                let bestGameIndex = -1;
+                
+                // We make up to 3 passes to fill this specific time slot
+                // Pass 1: Strict Weekly/Daily Limits
+                // Pass 2: Relax Weekly Limits (to force slot filling)
+                // Pass 3: Relax Daily Limits (allow double headers, but not simultaneous)
+                for (let pass = 1; pass <= 3; pass++) {
+                    let maxWeight = -1;
+
+                    for (let i = 0; i < pendingGames.length; i++) {
+                        const game = pendingGames[i];
+                        const group = ageGroups.find(g => g.id === game.groupId);
+                        const durationMins = Number(group.duration) || 90;
+
+                        // --- HARD CONSTRAINTS (Never Relaxed) ---
+                        if (!field.allowedGroups.includes(game.groupId)) continue; // Field Check
+                        if (teamBusyTimes[`${day.dateStr}|${time}|${game.teamA.id}`]) continue; // Double Book
+                        if (teamBusyTimes[`${day.dateStr}|${time}|${game.teamB.id}`]) continue; // Double Book
+                        if (hasCoachConflict(game.teamA, game.teamB, day.dateStr, time, durationMins)) continue;
+
+                        // --- THE CYCLE RULE (Rematch Control) ---
+                        // Only schedule this game if both teams have finished all previous cycles
+                        if (game.cycle > teamMinCycle[game.teamA.id] || game.cycle > teamMinCycle[game.teamB.id]) {
+                            continue; 
+                        }
+
+                        // --- FLEXIBLE CONSTRAINTS (Relaxed based on Pass) ---
+                        if (pass <= 2) {
+                            // Enforce Max 1 game per day per team
+                            if ((teamDailyGames[`${day.dateStr}|${game.teamA.id}`] || 0) >= 1) continue;
+                            if ((teamDailyGames[`${day.dateStr}|${game.teamB.id}`] || 0) >= 1) continue;
+                        }
+
+                        if (pass === 1) {
+                            // Enforce strict weekly games limit
+                            const maxWk = Number(group.gamesPerWeek) || 2;
+                            if ((teamWeeklyGames[`${weekId}|${game.teamA.id}`] || 0) >= maxWk) continue;
+                            if ((teamWeeklyGames[`${weekId}|${game.teamB.id}`] || 0) >= maxWk) continue;
+
+                            // Enforce strict Weekday/Weekend distribution
+                            const limitWeekday = Number(group.maxWeekday) !== undefined ? Number(group.maxWeekday) : 1;
+                            const limitWeekend = Number(group.maxWeekend) !== undefined ? Number(group.maxWeekend) : 2;
+                            if (isWeekday) {
+                                if ((teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] || 0) >= limitWeekday) continue;
+                                if ((teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] || 0) >= limitWeekday) continue;
+                            } else {
+                                if ((teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] || 0) >= limitWeekend) continue;
+                                if ((teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] || 0) >= limitWeekend) continue;
+                            }
+                        }
+
+                        // --- HEURISTIC SCORING ---
+                        // Prioritize the game involving teams with the most games left to schedule
+                        const weight = (teamGamesLeft[game.teamA.id] || 0) + (teamGamesLeft[game.teamB.id] || 0);
+                        
+                        if (weight > maxWeight) {
+                            maxWeight = weight;
+                            bestGameIndex = i;
+                        }
+                    }
+
+                    // If we found a game on this pass, stop relaxing constraints and proceed
+                    if (bestGameIndex !== -1) break;
+                }
+
+                // --- FINALIZE SLOT ---
+                if (bestGameIndex !== -1) {
+                    const game = pendingGames[bestGameIndex];
+                    const group = ageGroups.find(g => g.id === game.groupId);
+                    const durationMins = Number(group.duration) || 90;
+
+                    // Home/Away Balancing
+                    const tIds = [game.teamA.id, game.teamB.id].sort();
+                    const mKey = `${tIds[0]}|${tIds[1]}`;
+                    
+                    let homeTeam, awayTeam;
+                    const lastHomeId = matchupSides[mKey];
+                    
+                    if (lastHomeId) {
+                        if (lastHomeId === game.teamA.id) { homeTeam = game.teamB; awayTeam = game.teamA; }
+                        else { homeTeam = game.teamA; awayTeam = game.teamB; }
+                    } else {
+                        const c1 = teamHomeCounts[game.teamA.id] || 0;
+                        const c2 = teamHomeCounts[game.teamB.id] || 0;
+                        if (c1 < c2) { homeTeam = game.teamA; awayTeam = game.teamB; }
+                        else if (c2 < c1) { homeTeam = game.teamB; awayTeam = game.teamA; }
+                        else {
+                            if (Math.random() > 0.5) { homeTeam = game.teamA; awayTeam = game.teamB; }
+                            else { homeTeam = game.teamB; awayTeam = game.teamA; }
+                        }
+                    }
+                    
+                    matchupSides[mKey] = homeTeam.id;
+                    teamHomeCounts[homeTeam.id] = (teamHomeCounts[homeTeam.id] || 0) + 1;
+
+                    // Mark slot as booked
+                    scheduledGames.push({ 
+                        ...game, 
+                        teamA: homeTeam,
+                        teamB: awayTeam, 
+                        dateStr: day.dateStr, 
+                        displayDate: day.displayDate, 
+                        time, 
+                        fieldId: field.id, 
+                        fieldName: field.name 
+                    });
+
+                    // Update Trackers
+                    teamBusyTimes[`${day.dateStr}|${time}|${game.teamA.id}`] = true;
+                    teamBusyTimes[`${day.dateStr}|${time}|${game.teamB.id}`] = true;
+
+                    teamDailyGames[`${day.dateStr}|${game.teamA.id}`] = (teamDailyGames[`${day.dateStr}|${game.teamA.id}`] || 0) + 1;
+                    teamDailyGames[`${day.dateStr}|${game.teamB.id}`] = (teamDailyGames[`${day.dateStr}|${game.teamB.id}`] || 0) + 1;
+                    
+                    teamWeeklyGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
+                    teamWeeklyGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
+                    
+                    if (isWeekday) {
+                        teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
+                        teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekdayGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
+                    } else {
+                        teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamA.id}`] || 0) + 1;
+                        teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] = (teamWeeklyWeekendGames[`${weekId}|${game.teamB.id}`] || 0) + 1;
+                    }
+
+                    const gameEnd = gameStart + durationMins;
+                    [game.teamA.headCoachId, game.teamA.asstCoachId, game.teamB.headCoachId, game.teamB.asstCoachId].filter(Boolean).forEach(cid => {
+                        addCoachInterval(cid, day.dateStr, gameStart, gameEnd);
+                    });
+
+                    teamGamesLeft[game.teamA.id]--;
+                    teamGamesLeft[game.teamB.id]--;
+
+                    // Remove from pending
+                    pendingGames.splice(bestGameIndex, 1);
+                }
+            }
+        }
+    }
+
+    // Any games left in pendingGames failed to find a valid slot
+    const unscheduledGames = pendingGames.map(g => ({ 
+        ...g, 
+        reason: `Constraints blocked scheduling (Check Field/Coach availability)` 
+    }));
 
     return { 
         games: scheduledGames.sort((a,b) => a.dateStr.localeCompare(b.dateStr) || a.time.localeCompare(b.time)), 
@@ -736,7 +738,7 @@ export default function App() {
     return (
       <div className="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center">
         <div className="bg-blue-600 p-4 rounded-2xl text-white shadow-xl shadow-blue-200 mb-6 animate-bounce">
-          <CalendarIcon className="w-12 h-12" />
+          <Calendar className="w-12 h-12" />
         </div>
         <h1 className="font-bold text-3xl tracking-tight text-slate-800 mb-2">
           LeagueScheduler<span className="text-blue-600">Pro</span>
@@ -750,7 +752,7 @@ export default function App() {
     <div className="space-y-6">
       <Card className="p-5">
         <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-          <CalendarIcon className="w-5 h-5 text-blue-600" /> Season Duration
+          <Calendar className="w-5 h-5 text-blue-600" /> Season Duration
         </h3>
         <div className="grid gap-4">
           <Input label="Season Start" type="date" value={seasonConfig.startDate} onChange={e => setSeasonConfig({...seasonConfig, startDate: e.target.value})} />
@@ -1244,7 +1246,7 @@ export default function App() {
         <div className="max-w-6xl mx-auto px-4 h-14 md:h-16 flex items-center justify-between">
            <div className="flex items-center gap-2.5">
               <div className="bg-blue-600 p-1.5 rounded-lg text-white">
-                <CalendarIcon className="w-5 h-5" />
+                <Calendar className="w-5 h-5" />
               </div>
               <h1 className="font-bold text-lg md:text-xl tracking-tight text-slate-800">
                 LeagueScheduler<span className="text-blue-600">Pro</span>

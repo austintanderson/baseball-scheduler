@@ -217,7 +217,7 @@ export default function App() {
     email: ''
   });
   
-  // Submit state now holds an object: { status: 'success'|'waitlist'|'error', cancelCode?: '...', submittedName: '...' }
+  // Submit state now holds an object: { status: 'success'|'waitlist'|'error'|'duplicate', cancelCode?: '...', submittedName: '...' }
   const [derbySubmitState, setDerbySubmitState] = useState(null); 
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelCodeInput, setCancelCodeInput] = useState('');
@@ -312,6 +312,18 @@ export default function App() {
     setDerbySubmitState({ status: 'submitting' });
 
     try {
+      // --- DUPLICATE SIGNUP CHECK ---
+      const isDuplicate = derbySignups.some(
+        s => s.playerName.toLowerCase().trim() === derbyForm.playerName.toLowerCase().trim() &&
+             s.ageGroup === derbyForm.ageGroup &&
+             s.status !== 'canceled' // Allow them to signup again if they previously canceled
+      );
+
+      if (isDuplicate) {
+        setDerbySubmitState({ status: 'duplicate' });
+        return;
+      }
+
       // 1. Calculate how many signups already exist for this age group
       const existingCount = derbySignups.filter(s => s.ageGroup === derbyForm.ageGroup && s.status === 'registered').length;
       
@@ -356,9 +368,10 @@ export default function App() {
               </div>
             </div>
 
-            <div style="text-align: center;">
-              <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
-            </div>
+            <p style="font-size: 14px; text-align: center; margin-top: 20px;">
+              To cancel, click the link below, select the signup form, and then click the link to unregister at the bottom of the page.<br><br>
+              <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Click Here to Cancel</a>
+            </p>
           </div>
         </div>
       ` : `
@@ -409,11 +422,12 @@ export default function App() {
               </div>
             </div>
 
-            <div style="text-align: center;">
-              <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
-            </div>
+            <p style="font-size: 14px; text-align: center; margin-top: 20px;">
+              To cancel, click the link below, select the signup form, and then click the link to unregister at the bottom of the page.<br><br>
+              <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Click Here to Cancel</a>
+            </p>
             
-            <p style="text-align: center; margin-top: 25px; color: #64748b;">Get your bats ready! We'll see you on the dirt. 🏟️</p>
+            <p style="text-align: center; margin-top: 25px; color: #64748b;">Get your bats ready! We'll see you out there! 🏟️</p>
           </div>
         </div>
       `;
@@ -538,10 +552,11 @@ export default function App() {
                   </div>
                 </div>
                 
-                <div style="text-align: center;">
-                  <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
-                </div>
-                <p style="text-align: center; margin-top: 25px; color: #64748b;">Get your bats ready! We'll see you on the dirt. 🏟️</p>
+                <p style="font-size: 14px; text-align: center; margin-top: 20px;">
+                  To cancel, click the link below, select the signup form, and then click the link to unregister at the bottom of the page.<br><br>
+                  <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Click Here to Cancel</a>
+                </p>
+                <p style="text-align: center; margin-top: 25px; color: #64748b;">Get your bats ready! We'll see you out there! 🏟️</p>
               </div>
             </div>
           `;
@@ -1262,6 +1277,12 @@ export default function App() {
                     <p className="text-sm font-medium">Something went wrong. Please check your connection and try again.</p>
                   </div>
                 )}
+                {derbySubmitState?.status === 'duplicate' && (
+                  <div className="p-4 bg-amber-50 text-amber-800 rounded-xl border border-amber-200 flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <p className="text-sm font-medium">This player is already registered for this age group!</p>
+                  </div>
+                )}
 
                 <div className="space-y-1.5">
                   <label className="text-sm font-semibold text-slate-600 ml-1">Age Group *</label>
@@ -1327,7 +1348,7 @@ export default function App() {
           </Card>
 
           {/* Cancellation Toggle */}
-          {!isCancelling && (!derbySubmitState || derbySubmitState.status === 'error') && (
+          {!isCancelling && (!derbySubmitState || derbySubmitState.status === 'error' || derbySubmitState.status === 'duplicate') && (
             <div className="mt-8 text-center">
               <button 
                 type="button"

@@ -217,7 +217,7 @@ export default function App() {
     email: ''
   });
   
-  // Submit state now holds an object: { status: 'success'|'waitlist'|'error', cancelCode?: '...' }
+  // Submit state now holds an object: { status: 'success'|'waitlist'|'error', cancelCode?: '...', submittedName: '...' }
   const [derbySubmitState, setDerbySubmitState] = useState(null); 
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelCodeInput, setCancelCodeInput] = useState('');
@@ -322,29 +322,35 @@ export default function App() {
       // 3. Generate a unique cancellation code
       const generatedCancelCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
+      // Save the submitted name before we clear the form
+      const submittedPlayerName = derbyForm.playerName;
+
       // --- 4. DRAFT THE EMAIL BODY HERE ---
       // This HTML will be sent to Firebase, and the Email Extension will automatically fire it off.
-      const emailHtml = `
+      const emailHtml = isWaitlist ? `
         <div style="font-family: Arial, sans-serif; color: #334155; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
-          <div style="background-color: #f97316; padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">OMYBS Homerun Derby 2026</h1>
+          <div style="background-color: #ea580c; padding: 20px; text-align: center;">
+            <h1 style="color: white; margin: 0;">⚾ 2026 OMYBS Home Run Derby! ⚾</h1>
           </div>
           <div style="padding: 30px;">
-            <h2 style="margin-top: 0;">You're on the list!</h2>
-            <p>You have successfully submitted a registration for <strong>${derbyForm.playerName}</strong>.</p>
+            <h2 style="margin-top: 0;">You're on the waitlist!</h2>
+            <p>Thank you for signing up for the 2026 OMYBS Home Run Derby! This event is highly anticipated and limited to exactly 40 players per age group.</p>
+            <p>Currently, the ${derbyForm.ageGroup.toUpperCase()} division is at capacity, so <strong>${submittedPlayerName}</strong> has been placed on the waitlist.</p>
             
             <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
-              <p style="margin: 0 0 10px 0;"><strong>Status:</strong> ${isWaitlist ? '<span style="color: #ea580c; font-weight: bold;">Waitlisted</span>' : '<span style="color: #16a34a; font-weight: bold;">Registered</span>'}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Status:</strong> <span style="color: #ea580c; font-weight: bold;">Waitlisted</span></p>
               <p style="margin: 0 0 10px 0;"><strong>Age Group:</strong> ${derbyForm.ageGroup.toUpperCase()}</p>
-              <p style="margin: 0 0 10px 0;"><strong>Team:</strong> ${derbyForm.teamName}</p>
-              ${!isWaitlist ? '<p style="margin: 0;"><strong>Fee:</strong> $10 (Please pay via Venmo to @omybs)</p>' : ''}
+              <p style="margin: 0;"><strong>Team:</strong> ${derbyForm.teamName}</p>
             </div>
 
-            <p><strong>Need to cancel?</strong></p>
-            <p>If you can no longer attend, please cancel so the next child on the waitlist gets a spot. Click the link below and enter your cancellation code.</p>
-            
+            <p><strong>What happens next?</strong></p>
+            <p>If a spot opens up, you will automatically be moved into the lineup and will receive an official confirmation email with event details!</p>
+
+            <h3 style="margin-bottom: 8px;">Deregistration</h3>
+            <p style="margin-top: 0;">If you no longer wish to be considered for a spot, please navigate back to the site using the link below and follow the unregister process so our roster stays up-to-date.</p>
+
             <div style="text-align: center; margin: 25px 0;">
-              <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Your Cancellation Code</p>
+              <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Your Unique Deregister Key</p>
               <div style="font-family: monospace; font-size: 24px; font-weight: bold; background: #e2e8f0; padding: 10px 20px; border-radius: 6px; display: inline-block; letter-spacing: 4px;">
                 ${generatedCancelCode}
               </div>
@@ -353,6 +359,61 @@ export default function App() {
             <div style="text-align: center;">
               <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
             </div>
+          </div>
+        </div>
+      ` : `
+        <div style="font-family: Arial, sans-serif; color: #334155; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+          <div style="background-color: #f97316; padding: 20px; text-align: center;">
+            <h1 style="color: white; margin: 0;">⚾ 2026 OMYBS Home Run Derby! ⚾</h1>
+          </div>
+          <div style="padding: 30px;">
+            <h2 style="margin-top: 0;">You're in the lineup!</h2>
+            <p>Thank you for signing up for the 2026 OMYBS Home Run Derby! Your spot in the Derby for <strong>${submittedPlayerName}</strong> has been officially confirmed!</p>
+            
+            <div style="background-color: #f8fafc; border-left: 4px solid #f97316; padding: 15px; margin: 20px 0;">
+              <h3 style="margin-top: 0; color: #f97316; font-size: 16px;">Event Details</h3>
+              <p style="margin: 0 0 8px 0;"><strong>When:</strong> Saturday, March 14th at 5:30 PM</p>
+              <p style="margin: 0 0 8px 0;"><strong>Where:</strong> Heardmont 5 Complex</p>
+              <p style="margin: 0 0 4px 0;"><strong>Fields by Age Group:</strong></p>
+              <ul style="margin: 0; padding-left: 20px;">
+                <li style="margin-bottom: 4px;"><strong>6U</strong> - H5A</li>
+                <li style="margin-bottom: 4px;"><strong>7U</strong> - H5B</li>
+                <li style="margin-bottom: 4px;"><strong>8U</strong> - H5C</li>
+                <li><strong>9/10U</strong> - H5D</li>
+              </ul>
+            </div>
+
+            <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0 0 10px 0;"><strong>Status:</strong> <span style="color: #16a34a; font-weight: bold;">Registered</span></p>
+              <p style="margin: 0 0 10px 0;"><strong>Age Group:</strong> ${derbyForm.ageGroup.toUpperCase()}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Team:</strong> ${derbyForm.teamName}</p>
+              <p style="margin: 0;"><strong>Fee:</strong> $10 (Please pay via Venmo to @omybs)</p>
+            </div>
+
+            <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <h3 style="margin-top: 0; color: #1e3a8a; font-size: 16px;">💰 Payment Reminder</h3>
+              <p style="margin-top: 0; color: #1e40af;">If you didn't complete your payment on the confirmation screen, please send your <strong>$10 registration fee</strong> via Venmo to finalize your spot.</p>
+              <ul style="margin: 0; padding-left: 20px; color: #1e3a8a;">
+                <li style="margin-bottom: 4px;"><strong>Venmo Handle:</strong> <a href="https://venmo.com/omybs" style="color: #008CFF; text-decoration: none; font-weight: bold;">@omybs</a></li>
+                <li><strong>What to add in the notes:</strong> "Derby Fee - ${submittedPlayerName}"</li>
+              </ul>
+            </div>
+
+            <h3 style="margin-bottom: 8px;">Waitlist & Cancellation Policy</h3>
+            <p style="margin-top: 0;">This event is highly anticipated and limited to 40 players per age group, meaning a waitlist currently exists. <strong>If for any reason you are unable to attend</strong>, please navigate back to the site using the link below and follow the unregister process so the next slugger in line can get a chance to swing for the fences!</p>
+            
+            <div style="text-align: center; margin: 25px 0;">
+              <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Your Unique Deregister Key</p>
+              <div style="font-family: monospace; font-size: 24px; font-weight: bold; background: #e2e8f0; padding: 10px 20px; border-radius: 6px; display: inline-block; letter-spacing: 4px;">
+                ${generatedCancelCode}
+              </div>
+            </div>
+
+            <div style="text-align: center;">
+              <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
+            </div>
+            
+            <p style="text-align: center; margin-top: 25px; color: #64748b;">Get your bats ready! We'll see you on the dirt. 🏟️</p>
           </div>
         </div>
       `;
@@ -375,7 +436,8 @@ export default function App() {
 
       setDerbySubmitState({ 
         status: isWaitlist ? 'waitlist' : 'success', 
-        cancelCode: generatedCancelCode 
+        cancelCode: generatedCancelCode,
+        submittedName: submittedPlayerName // Save the name here so Venmo can use it!
       });
       setDerbyForm({ ageGroup: '', playerName: '', nickname: '', teamName: '', email: '' });
     } catch (error) {
@@ -441,33 +503,45 @@ export default function App() {
           const bumpedEmailHtml = `
             <div style="font-family: Arial, sans-serif; color: #334155; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
               <div style="background-color: #16a34a; padding: 20px; text-align: center;">
-                <h1 style="color: white; margin: 0;">OMYBS Homerun Derby 2026</h1>
+                <h1 style="color: white; margin: 0;">⚾ 2026 OMYBS Home Run Derby! ⚾</h1>
               </div>
               <div style="padding: 30px;">
                 <h2 style="margin-top: 0;">You're off the waitlist!</h2>
-                <p>Good news! A spot just opened up and <strong>${nextInLine.playerName}</strong> has been officially moved into the Derby.</p>
+                <p>Great news! A spot just opened up and <strong>${nextInLine.playerName}</strong> has been officially moved off the waitlist and into the Derby lineup!</p>
                 
+                <div style="background-color: #f8fafc; border-left: 4px solid #16a34a; padding: 15px; margin: 20px 0;">
+                  <h3 style="margin-top: 0; color: #16a34a; font-size: 16px;">Event Details</h3>
+                  <p style="margin: 0 0 8px 0;"><strong>When:</strong> Saturday, March 14th at 5:30 PM</p>
+                  <p style="margin: 0 0 8px 0;"><strong>Where:</strong> Heardmont 5 Complex</p>
+                  <p style="margin: 0 0 4px 0;"><strong>Fields by Age Group:</strong></p>
+                  <ul style="margin: 0; padding-left: 20px;">
+                    <li style="margin-bottom: 4px;"><strong>6U</strong> - H5A</li>
+                    <li style="margin-bottom: 4px;"><strong>7U</strong> - H5B</li>
+                    <li style="margin-bottom: 4px;"><strong>8U</strong> - H5C</li>
+                    <li><strong>9/10U</strong> - H5D</li>
+                  </ul>
+                </div>
+
                 <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
                   <p style="margin: 0 0 10px 0;"><strong>Status:</strong> <span style="color: #16a34a; font-weight: bold;">Registered</span></p>
                   <p style="margin: 0 0 10px 0;"><strong>Age Group:</strong> ${nextInLine.ageGroup.toUpperCase()}</p>
-                  <p style="margin: 0;"><strong>Fee:</strong> $10 (Please pay via Venmo to @omybs)</p>
+                  <p style="margin: 0;"><strong>Fee:</strong> $10 (Please pay via Venmo to @omybs and include "Derby Fee - ${nextInLine.playerName}" in the notes)</p>
                 </div>
 
-                <p><strong>Payment Instructions:</strong></p>
-                <p>Please send your $10 registration fee to <strong>@omybs</strong> on Venmo and include "Derby Fee - (${nextInLine.playerName})" in the notes.</p>
+                <h3 style="margin-bottom: 8px;">Waitlist & Cancellation Policy</h3>
+                <p style="margin-top: 0;">This event is highly anticipated and limited to exactly 40 players per age group, meaning a waitlist still exists. <strong>If for any reason you are unable to attend</strong>, please navigate back to the site using the link below and follow the unregister process so the next child can take the field.</p>
 
                 <div style="text-align: center; margin: 25px 0;">
-                  <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Your Cancellation Code</p>
+                  <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Your Unique Deregister Key</p>
                   <div style="font-family: monospace; font-size: 24px; font-weight: bold; background: #e2e8f0; padding: 10px 20px; border-radius: 6px; display: inline-block; letter-spacing: 4px;">
                     ${nextInLine.cancelCode}
                   </div>
                 </div>
                 
-                <p style="font-size: 14px; text-align: center; margin-top: 20px;">
-                  If you can no longer attend, please cancel using the link below so the next child gets a spot:<br>
-                  <br>
+                <div style="text-align: center;">
                   <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
-                </p>
+                </div>
+                <p style="text-align: center; margin-top: 25px; color: #64748b;">Get your bats ready! We'll see you on the dirt. 🏟️</p>
               </div>
             </div>
           `;
@@ -1124,7 +1198,7 @@ export default function App() {
                   <div className="flex flex-col items-center gap-4">
                     {/* Venmo Deep Link Button */}
                     <a 
-                      href={`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - (${encodeURIComponent(derbyForm.playerName)})`}
+                      href={`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - ${encodeURIComponent(derbySubmitState.submittedName)}`}
                       className="bg-[#008CFF] hover:bg-[#0074D9] text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors w-full justify-center shadow-sm"
                     >
                       Pay with Venmo
@@ -1139,7 +1213,7 @@ export default function App() {
                     {/* Generates a dynamic QR code containing the exact same Venmo payment URL */}
                     <div className="bg-white p-3 rounded-xl border border-blue-100 shadow-sm inline-block">
                       <img 
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - (${derbyForm.playerName})`)}`} 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - ${derbySubmitState.submittedName}`)}`} 
                         alt="Venmo QR Code" 
                         className="w-32 h-32"
                       />

@@ -443,7 +443,7 @@ export default function App() {
         // These two fields tell the Firebase Extension to send an email!
         to: derbyForm.email,
         message: {
-          subject: `OMYBS Homerun Derby - ${isWaitlist ? 'Waitlist' : 'Registration'} Confirmation`,
+          subject: `OMYBS Home Run Derby - ${isWaitlist ? 'Waitlist' : 'Registration'} Confirmation`,
           html: emailHtml
         }
       });
@@ -478,7 +478,7 @@ export default function App() {
       const cancelEmailHtml = `
         <div style="font-family: Arial, sans-serif; color: #334155; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
           <div style="background-color: #64748b; padding: 20px; text-align: center;">
-            <h1 style="color: white; margin: 0;">OMYBS Homerun Derby 2026</h1>
+            <h1 style="color: white; margin: 0;">OMYBS Home Run Derby 2026</h1>
           </div>
           <div style="padding: 30px;">
             <h2 style="margin-top: 0;">Cancellation Confirmed</h2>
@@ -494,7 +494,7 @@ export default function App() {
         status: 'canceled',
         delivery: { state: 'PENDING' },
         message: {
-          subject: 'OMYBS Homerun Derby - Cancellation Confirmed',
+          subject: 'OMYBS Home Run Derby - Cancellation Confirmed',
           html: cancelEmailHtml
         }
       });
@@ -566,7 +566,7 @@ export default function App() {
             status: 'registered',
             delivery: { state: 'PENDING' },
             message: {
-              subject: "OMYBS Homerun Derby - You're off the waitlist!",
+              subject: "OMYBS Home Run Derby - You're off the waitlist!",
               html: bumpedEmailHtml
             }
           });
@@ -1064,8 +1064,11 @@ export default function App() {
           Please select the application you'd like to access today.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
-          {/* Option 1: League Scheduler Pro */}
+        {/* Changed to max-w-xl to center the single remaining button better */}
+        <div className="grid grid-cols-1 gap-6 w-full max-w-xl">
+          
+          {/* Option 1: League Scheduler Pro - COMMENTED OUT TEMPORARILY */}
+          {/*
           <button 
             onClick={() => setAppMode('scheduler')}
             className="group relative bg-white p-8 rounded-3xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-blue-300 transition-all duration-300 text-left flex flex-col justify-between h-64 overflow-hidden"
@@ -1088,6 +1091,7 @@ export default function App() {
               Continue <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-2 transition-transform" />
             </div>
           </button>
+          */}
 
           {/* Option 2: Home Run Derby Signup */}
           <button 
@@ -1102,7 +1106,7 @@ export default function App() {
                 <Trophy className="w-6 h-6" />
               </div>
               <h2 className="text-2xl font-bold text-slate-800 mb-2 group-hover:text-orange-600 transition-colors">
-                OMYBS Homerun Derby 2026
+                OMYBS Home Run Derby 2026
               </h2>
               <p className="text-slate-500 text-sm">
                 Player signups and waitlist management.
@@ -1138,7 +1142,7 @@ export default function App() {
 
         <main className="max-w-xl mx-auto px-4 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-extrabold text-slate-900 mb-3">OMYBS Homerun Derby 2026</h1>
+            <h1 className="text-3xl font-extrabold text-slate-900 mb-3">OMYBS Home Run Derby 2026</h1>
             <p className="text-slate-500">
               Space is limited to <span className="font-bold text-orange-600">40 participants per age group</span>. 
               Sign up below to secure your spot or join the waitlist!
@@ -1203,7 +1207,7 @@ export default function App() {
                   <CheckCircle className="w-10 h-10" />
                 </div>
                 <h2 className="text-2xl font-bold text-slate-900 mb-2">You're In!</h2>
-                <p className="text-slate-600 mb-6">Your registration has been confirmed for the 2026 Homerun Derby.</p>
+                <p className="text-slate-600 mb-6">Your registration has been confirmed for the 2026 Home Run Derby.</p>
                 
                 {/* PAYMENT SECTION */}
                 <div className="bg-blue-50 border border-blue-200 p-5 rounded-xl mb-6 text-center">

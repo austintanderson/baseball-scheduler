@@ -13,30 +13,39 @@ import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp, deleteDo
 
 let app, auth, db, appId, rawAppId;
 try {
-  // 👇 REPLACE THESE VALUES WITH YOUR FIREBASE PROJECT CONFIGURATION 👇
+  // Safely grab the API key whether using Vite (import.meta.env) or Create React App (process.env)
+  // If the environment variable fails, it falls back to the string below.
+  let apiKey = "YOUR_API_KEY";
+  
+  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_API_KEY) {
+      apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+  } else if (typeof process !== 'undefined' && process.env?.REACT_APP_FIREBASE_API_KEY) {
+      apiKey = process.env.REACT_APP_FIREBASE_API_KEY;
+  }
+
+  // 👇 YOUR FIREBASE PROJECT CONFIGURATION 👇
+  // NOTE: It is safe to hardcode your API key here for GitHub Pages if you cannot get the ENV vars working.
+  // Firebase Web API keys are meant to be public. Security is handled by Firestore Rules.
   const manualFirebaseConfig = {
-    // Pulling from environment variables to prevent GitHub plaintext secret alerts
-    apiKey: import.meta.env?.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
+    apiKey: apiKey, // You can replace 'apiKey' with '"AIzaSy..."' if needed
     authDomain: "baseball-scheduler-af4f5.firebaseapp.com",
     projectId: "baseball-scheduler-af4f5",
     storageBucket: "baseball-scheduler-af4f5.firebasestorage.app",
     messagingSenderId: "19278883081",
     appId: "1:19278883081:web:927965acfa281acf634bd8",
     measurementId: "G-CJG0DCT3MP"
-};
+  };
 
-
-  // Fallback for the AI environment preview (so it doesn't crash while you are editing)
-  const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-  const isUsingManualConfig = manualFirebaseConfig.apiKey !== "YOUR_API_KEY";
-  const finalConfig = isUsingManualConfig ? manualFirebaseConfig : envConfig;
+  // Explicitly check if we are in the AI testing environment or Production (GitHub Pages)
+  const inCanvasEnvironment = typeof __firebase_config !== 'undefined';
+  const finalConfig = inCanvasEnvironment ? JSON.parse(__firebase_config) : manualFirebaseConfig;
 
   app = initializeApp(finalConfig);
   auth = getAuth(app);
   db = getFirestore(app);
   
-  // Sets the root database path. If using your own config, it defaults to 'my-league-app'
-  rawAppId = (typeof __app_id !== 'undefined' && !isUsingManualConfig) ? __app_id : 'my-league-app';
+  // Sets the root database path. Defaults to 'my-league-app' in production
+  rawAppId = inCanvasEnvironment ? __app_id : 'my-league-app';
   appId = String(rawAppId).replace(/\//g, '_');
   
 } catch (error) {
@@ -297,7 +306,7 @@ export default function App() {
   const handleDerbySubmit = async (e) => {
     e.preventDefault();
     if (!user || !db || !appId) {
-      alert("Database connection not ready. Please try again.");
+      alert("Database connection not ready. Please check your internet connection or API keys and try again.");
       return;
     }
     setDerbySubmitState({ status: 'submitting' });
@@ -313,14 +322,55 @@ export default function App() {
       // 3. Generate a unique cancellation code
       const generatedCancelCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-      // 4. Save to Firestore (Public Collection)
+      // --- 4. DRAFT THE EMAIL BODY HERE ---
+      // This HTML will be sent to Firebase, and the Email Extension will automatically fire it off.
+      const emailHtml = `
+        <div style="font-family: Arial, sans-serif; color: #334155; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+          <div style="background-color: #f97316; padding: 20px; text-align: center;">
+            <h1 style="color: white; margin: 0;">OMYBS Homerun Derby 2026</h1>
+          </div>
+          <div style="padding: 30px;">
+            <h2 style="margin-top: 0;">You're on the list!</h2>
+            <p>You have successfully submitted a registration for <strong>${derbyForm.playerName}</strong>.</p>
+            
+            <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0 0 10px 0;"><strong>Status:</strong> ${isWaitlist ? '<span style="color: #ea580c; font-weight: bold;">Waitlisted</span>' : '<span style="color: #16a34a; font-weight: bold;">Registered</span>'}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Age Group:</strong> ${derbyForm.ageGroup.toUpperCase()}</p>
+              <p style="margin: 0 0 10px 0;"><strong>Team:</strong> ${derbyForm.teamName}</p>
+              ${!isWaitlist ? '<p style="margin: 0;"><strong>Fee:</strong> $10 (Please pay via Venmo to @omybs)</p>' : ''}
+            </div>
+
+            <p><strong>Need to cancel?</strong></p>
+            <p>If you can no longer attend, please cancel so the next child on the waitlist gets a spot. Click the link below and enter your cancellation code.</p>
+            
+            <div style="text-align: center; margin: 25px 0;">
+              <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Your Cancellation Code</p>
+              <div style="font-family: monospace; font-size: 24px; font-weight: bold; background: #e2e8f0; padding: 10px 20px; border-radius: 6px; display: inline-block; letter-spacing: 4px;">
+                ${generatedCancelCode}
+              </div>
+            </div>
+
+            <div style="text-align: center;">
+              <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // 5. Save to Firestore (Public Collection)
       const signupsRef = collection(db, 'artifacts', appId, 'public', 'data', 'derby_signups');
       await addDoc(signupsRef, {
         ...derbyForm,
-        status: finalStatus, // This explicitly saves "registered" or "waitlist" in your DB
+        status: finalStatus, 
         cancelCode: generatedCancelCode,
         userId: user.uid,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        // These two fields tell the Firebase Extension to send an email!
+        to: derbyForm.email,
+        message: {
+          subject: `OMYBS Homerun Derby - ${isWaitlist ? 'Waitlist' : 'Registration'} Confirmation`,
+          html: emailHtml
+        }
       });
 
       setDerbySubmitState({ 
@@ -348,8 +398,30 @@ export default function App() {
         return;
       }
 
-      // Delete the user's registration
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'derby_signups', targetSignup.id));
+      // --- 1. DRAFT CANCELLATION EMAIL ---
+      const cancelEmailHtml = `
+        <div style="font-family: Arial, sans-serif; color: #334155; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+          <div style="background-color: #64748b; padding: 20px; text-align: center;">
+            <h1 style="color: white; margin: 0;">OMYBS Homerun Derby 2026</h1>
+          </div>
+          <div style="padding: 30px;">
+            <h2 style="margin-top: 0;">Cancellation Confirmed</h2>
+            <p>Hi, this is a confirmation that the registration for <strong>${targetSignup.playerName}</strong> has been successfully canceled.</p>
+            <p>Thank you for letting us know, and we hope to see you next season!</p>
+          </div>
+        </div>
+      `;
+
+      // Update the user's registration to "canceled" instead of deleting it completely
+      // We pass delivery: { state: 'PENDING' } to force the Firebase Extension to send a new email on update.
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'derby_signups', targetSignup.id), {
+        status: 'canceled',
+        delivery: { state: 'PENDING' },
+        message: {
+          subject: 'OMYBS Homerun Derby - Cancellation Confirmed',
+          html: cancelEmailHtml
+        }
+      });
 
       // ONLY bump the waitlist if the cancelled user was 'registered'
       if (targetSignup.status === 'registered') {
@@ -364,9 +436,50 @@ export default function App() {
 
         if (waitlisted.length > 0) {
           const nextInLine = waitlisted[0];
-          // Update their status to registered
+          
+          // --- 2. DRAFT "OFF THE WAITLIST" EMAIL ---
+          const bumpedEmailHtml = `
+            <div style="font-family: Arial, sans-serif; color: #334155; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+              <div style="background-color: #16a34a; padding: 20px; text-align: center;">
+                <h1 style="color: white; margin: 0;">OMYBS Homerun Derby 2026</h1>
+              </div>
+              <div style="padding: 30px;">
+                <h2 style="margin-top: 0;">You're off the waitlist!</h2>
+                <p>Good news! A spot just opened up and <strong>${nextInLine.playerName}</strong> has been officially moved into the Derby.</p>
+                
+                <div style="background-color: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                  <p style="margin: 0 0 10px 0;"><strong>Status:</strong> <span style="color: #16a34a; font-weight: bold;">Registered</span></p>
+                  <p style="margin: 0 0 10px 0;"><strong>Age Group:</strong> ${nextInLine.ageGroup.toUpperCase()}</p>
+                  <p style="margin: 0;"><strong>Fee:</strong> $10 (Please pay via Venmo to @omybs)</p>
+                </div>
+
+                <p><strong>Payment Instructions:</strong></p>
+                <p>Please send your $10 registration fee to <strong>@omybs</strong> on Venmo and include "Derby Fee - (${nextInLine.playerName})" in the notes.</p>
+
+                <div style="text-align: center; margin: 25px 0;">
+                  <p style="font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;">Your Cancellation Code</p>
+                  <div style="font-family: monospace; font-size: 24px; font-weight: bold; background: #e2e8f0; padding: 10px 20px; border-radius: 6px; display: inline-block; letter-spacing: 4px;">
+                    ${nextInLine.cancelCode}
+                  </div>
+                </div>
+                
+                <p style="font-size: 14px; text-align: center; margin-top: 20px;">
+                  If you can no longer attend, please cancel using the link below so the next child gets a spot:<br>
+                  <br>
+                  <a href="${window.location.href}" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">Go to App to Cancel</a>
+                </p>
+              </div>
+            </div>
+          `;
+
+          // Update their status to registered and trigger the new email
           await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'derby_signups', nextInLine.id), {
-            status: 'registered'
+            status: 'registered',
+            delivery: { state: 'PENDING' },
+            message: {
+              subject: "OMYBS Homerun Derby - You're off the waitlist!",
+              html: bumpedEmailHtml
+            }
           });
         }
       }
@@ -1011,7 +1124,7 @@ export default function App() {
                   <div className="flex flex-col items-center gap-4">
                     {/* Venmo Deep Link Button */}
                     <a 
-                      href={`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - ${encodeURIComponent(derbyForm.playerName)}`}
+                      href={`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - (${encodeURIComponent(derbyForm.playerName)})`}
                       className="bg-[#008CFF] hover:bg-[#0074D9] text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors w-full justify-center shadow-sm"
                     >
                       Pay with Venmo
@@ -1026,7 +1139,7 @@ export default function App() {
                     {/* Generates a dynamic QR code containing the exact same Venmo payment URL */}
                     <div className="bg-white p-3 rounded-xl border border-blue-100 shadow-sm inline-block">
                       <img 
-                        src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - ${derbyForm.playerName}`)}`} 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - (${derbyForm.playerName})`)}`} 
                         alt="Venmo QR Code" 
                         className="w-32 h-32"
                       />

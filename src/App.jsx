@@ -1,34 +1,50 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Calendar, 
-  Users, 
-  MapPin, 
-  Settings, 
-  ChevronRight, 
-  Plus, 
-  Trash2, 
-  AlertCircle, 
-  CheckCircle, 
-  Shield,
-  UserCheck,
-  Download,
-  Clock,
-  CalendarCheck,
-  Share,
-  Save,
-  FolderOpen,
-  Search,
-  Printer,
-  WifiOff,
-  FileText
+  Calendar, Users, MapPin, Settings, ChevronRight, Plus, Trash2, AlertCircle, 
+  CheckCircle, Shield, UserCheck, Download, Clock, CalendarCheck, Share, Save, 
+  FolderOpen, Search, Printer, WifiOff, FileText, Trophy, ArrowRight, ArrowLeft,
+  ClipboardList
 } from 'lucide-react';
 
-// --- Local Storage Abstraction ---
-const storage = {
-  // Key for local storage
-  KEY: 'baseball_schedules',
+// --- Firebase Initialization ---
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
-  // Load all saved schedules
+let app, auth, db, appId, rawAppId;
+try {
+  // 👇 REPLACE THESE VALUES WITH YOUR FIREBASE PROJECT CONFIGURATION 👇
+  const manualFirebaseConfig = {
+    apiKey: "AIzaSyBRS4jd8NJWzGRvqpK-OYJ648KnzGS4YOU",
+    authDomain: "baseball-scheduler-af4f5.firebaseapp.com",
+    projectId: "baseball-scheduler-af4f5",
+    storageBucket: "baseball-scheduler-af4f5.firebasestorage.app",
+    messagingSenderId: "19278883081",
+    appId: "1:19278883081:web:927965acfa281acf634bd8",
+    measurementId: "G-CJG0DCT3MP"
+};
+
+
+  // Fallback for the AI environment preview (so it doesn't crash while you are editing)
+  const envConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+  const isUsingManualConfig = manualFirebaseConfig.apiKey !== "YOUR_API_KEY";
+  const finalConfig = isUsingManualConfig ? manualFirebaseConfig : envConfig;
+
+  app = initializeApp(finalConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  
+  // Sets the root database path. If using your own config, it defaults to 'my-league-app'
+  rawAppId = (typeof __app_id !== 'undefined' && !isUsingManualConfig) ? __app_id : 'my-league-app';
+  appId = String(rawAppId).replace(/\//g, '_');
+  
+} catch (error) {
+  console.error("Firebase initialization failed:", error);
+}
+
+// --- Local Storage Abstraction (For the Scheduler) ---
+const storage = {
+  KEY: 'baseball_schedules',
   loadAll: function() {
     try {
       const raw = localStorage.getItem(this.KEY);
@@ -38,21 +54,13 @@ const storage = {
       return [];
     }
   },
-
-  // Save a new schedule
   save: function(data) {
     const saves = this.loadAll();
-    const newSave = { 
-      ...data, 
-      id: `local-${Date.now()}`, 
-      createdAt: new Date().toISOString() 
-    };
+    const newSave = { ...data, id: `local-${Date.now()}`, createdAt: new Date().toISOString() };
     saves.unshift(newSave);
     localStorage.setItem(this.KEY, JSON.stringify(saves));
     return newSave;
   },
-
-  // Delete a schedule
   delete: function(id) {
     const saves = this.loadAll().filter(s => s.id !== id);
     localStorage.setItem(this.KEY, JSON.stringify(saves));
@@ -60,7 +68,6 @@ const storage = {
 };
 
 // --- Helper Functions ---
-
 const timeToMins = (timeStr) => {
   const [h, m] = timeStr.split(':').map(Number);
   return h * 60 + m;
@@ -75,7 +82,6 @@ const generateDates = (start, end, blackoutPeriods, weeklySchedule) => {
   current.setHours(0,0,0,0);
   endDate.setHours(0,0,0,0);
   
-  // Normalize blackout periods for easy comparison
   const normalizedBlackouts = (blackoutPeriods || []).map(p => {
     const s = new Date(p.start);
     const e = new Date(p.end);
@@ -90,7 +96,6 @@ const generateDates = (start, end, blackoutPeriods, weeklySchedule) => {
 
     let isBlackout = false;
     for (const period of normalizedBlackouts) {
-      // Check if valid dates are provided for this period
       if (period.start && period.end && !isNaN(period.start) && !isNaN(period.end)) {
          if (current >= period.start && current <= period.end) {
              isBlackout = true;
@@ -131,7 +136,6 @@ const getWeekIdentifier = (dateObj) => {
 };
 
 // --- Components ---
-
 const Card = ({ children, className = "" }) => (
   <div className={`bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden ${className} print:shadow-none print:border-0`}>
     {children}
@@ -165,29 +169,24 @@ const Input = ({ label, className = "", ...props }) => (
 );
 
 // --- Main Application ---
-
 export default function App() {
-  const [isLoading, setIsLoading] = useState(true);
+  // App Mode State: 'loading' -> 'landing' -> 'scheduler' | 'derby'
+  const [appMode, setAppMode] = useState('loading');
+  
+  // Firebase State
+  const [user, setUser] = useState(null);
+  const [derbySignups, setDerbySignups] = useState([]);
+
+  // Scheduler State
   const [activeTab, setActiveTab] = useState('setup');
-  
-  // Data State
   const [savedSchedules, setSavedSchedules] = useState([]);
-  
-  // App State
-  // Changed seasonConfig to array of blackout periods
-  const [seasonConfig, setSeasonConfig] = useState({ 
-    startDate: '', 
-    endDate: '', 
-    blackoutPeriods: [] // Array of { id, start, end }
-  });
-  // Default weekly schedule
+  const [seasonConfig, setSeasonConfig] = useState({ startDate: '', endDate: '', blackoutPeriods: [] });
   const defaultWeeklySchedule = {
     0: { active: false, times: '' }, 1: { active: false, times: '' }, 2: { active: false, times: '' },
     3: { active: false, times: '' }, 4: { active: false, times: '' }, 5: { active: false, times: '' },
     6: { active: false, times: '' }
   };
   const [weeklySchedule, setWeeklySchedule] = useState(defaultWeeklySchedule);
-  
   const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const [ageGroups, setAgeGroups] = useState([]);
   const [fields, setFields] = useState([]);
@@ -197,22 +196,70 @@ export default function App() {
   const [scheduleStats, setScheduleStats] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [newCoachName, setNewCoachName] = useState('');
-  
-  // External Conflicts State
   const [externalConflicts, setExternalConflicts] = useState([]);
 
-  // --- Effects ---
+  // Derby Form State
+  const [derbyForm, setDerbyForm] = useState({
+    ageGroup: '',
+    playerName: '',
+    nickname: '',
+    teamName: '',
+    email: ''
+  });
+  const [derbySubmitStatus, setDerbySubmitStatus] = useState(null); // 'submitting', 'waitlist', 'success', 'error'
+
+  // --- Initialization Effects ---
   useEffect(() => {
-    // Simulate initial loading
-    const timer = setTimeout(() => setIsLoading(false), 1000);
+    // Splash screen timer
+    const timer = setTimeout(() => setAppMode('landing'), 1500);
     
-    // Load initial saves
+    // Load local saves for scheduler
     setSavedSchedules(storage.loadAll());
 
     return () => clearTimeout(timer);
   }, []);
 
-  // Teams Sync
+  // Firebase Auth Effect
+  useEffect(() => {
+    if (!auth) return;
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth error:", e);
+      }
+    };
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // Firebase Data Fetch Effect (For Derby Signups)
+  useEffect(() => {
+    if (!user || !db || !appId) return;
+    
+    try {
+      // Listen to all public derby signups to maintain an accurate count
+      const signupsRef = collection(db, 'artifacts', appId, 'public', 'data', 'derby_signups');
+      const unsubscribe = onSnapshot(signupsRef, (snapshot) => {
+        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setDerbySignups(data);
+      }, (error) => {
+        console.error("Firestore snapshot error:", error);
+      });
+
+      return () => unsubscribe();
+    } catch (error) {
+      console.error("Failed to initialize Firestore listener:", error);
+    }
+  }, [user]);
+
+  // Teams Sync (Scheduler)
   useEffect(() => {
     let newTeams = [];
     let hasChanges = false;
@@ -240,7 +287,41 @@ export default function App() {
     }
   }, [ageGroups]);
 
-  // --- Handlers ---
+  // --- Derby Handlers ---
+  const handleDerbySubmit = async (e) => {
+    e.preventDefault();
+    if (!user || !db || !appId) {
+      alert("Database connection not ready. Please try again.");
+      return;
+    }
+    setDerbySubmitStatus('submitting');
+
+    try {
+      // 1. Calculate how many signups already exist for this age group
+      const existingCount = derbySignups.filter(s => s.ageGroup === derbyForm.ageGroup).length;
+      
+      // 2. Determine status (40 participant limit)
+      const isWaitlist = existingCount >= 40;
+      const finalStatus = isWaitlist ? 'waitlist' : 'registered';
+
+      // 3. Save to Firestore (Public Collection)
+      const signupsRef = collection(db, 'artifacts', appId, 'public', 'data', 'derby_signups');
+      await addDoc(signupsRef, {
+        ...derbyForm,
+        status: finalStatus,
+        userId: user.uid,
+        createdAt: serverTimestamp()
+      });
+
+      setDerbySubmitStatus(isWaitlist ? 'waitlist' : 'success');
+      setDerbyForm({ ageGroup: '', playerName: '', nickname: '', teamName: '', email: '' });
+    } catch (error) {
+      console.error("Submission failed:", error);
+      setDerbySubmitStatus('error');
+    }
+  };
+
+  // --- Scheduler Handlers ---
   const saveSchedule = async () => {
     const name = prompt("Enter a name for this save:", `Schedule ${new Date().toLocaleDateString()}`);
     if (!name) return;
@@ -248,7 +329,7 @@ export default function App() {
     const data = { name, seasonConfig, weeklySchedule, ageGroups, fields, coaches, teams, schedule, scheduleStats, externalConflicts };
     try {
       storage.save(data);
-      setSavedSchedules(storage.loadAll()); // Refresh list
+      setSavedSchedules(storage.loadAll());
       alert("Saved successfully!");
     } catch (e) {
       console.error(e);
@@ -261,18 +342,13 @@ export default function App() {
     
     const config = save.seasonConfig || {};
     if (config.blackoutStart && (!config.blackoutPeriods || config.blackoutPeriods.length === 0)) {
-        config.blackoutPeriods = [{
-            id: Date.now(),
-            start: config.blackoutStart,
-            end: config.blackoutEnd
-        }];
+        config.blackoutPeriods = [{ id: Date.now(), start: config.blackoutStart, end: config.blackoutEnd }];
     }
     if (!config.blackoutPeriods) config.blackoutPeriods = [];
 
     setSeasonConfig(config);
     setWeeklySchedule({ ...defaultWeeklySchedule, ...(save.weeklySchedule || {}) });
     
-    // Migrate Age Groups to include new max fields if missing
     const migratedGroups = (save.ageGroups || []).map(g => ({
         ...g,
         maxWeekday: g.maxWeekday !== undefined ? g.maxWeekday : 1,
@@ -292,7 +368,7 @@ export default function App() {
   const deleteSchedule = async (id) => {
     if (!confirm("Are you sure?")) return;
     storage.delete(id);
-    setSavedSchedules(storage.loadAll()); // Refresh list
+    setSavedSchedules(storage.loadAll());
   };
 
   const handleUpdateTeamCoach = (teamId, field, coachId) => {
@@ -322,11 +398,6 @@ export default function App() {
       [dayIndex]: { ...prev[dayIndex], times: newTimes }
     }));
   };
-
-  const handleNumericInput = (val) => {
-    if (val === '') return '';
-    return parseInt(val);
-  };
   
   const parseConflicts = (csvText) => {
     const lines = csvText.split('\n');
@@ -350,7 +421,6 @@ export default function App() {
     setExternalConflicts(conflicts);
   };
 
-  // --- Export Logic ---
   const shareFile = async (filename, content, mimeType) => {
     const file = new File([content], filename, { type: mimeType });
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -418,7 +488,7 @@ export default function App() {
     shareFile('league_schedule.ics', icsContent.join('\r\n'), 'text/calendar;charset=utf-8');
   };
 
-  // --- Algorithm with Diagnostics ---
+  // --- Algorithm ---
   const generateSchedule = async () => {
     setIsGenerating(true);
     setSchedule([]);
@@ -451,13 +521,11 @@ export default function App() {
     
     let allGames = [], gameIdCounter = 1;
     
-    // --- MATCHUP GENERATION (ROUND ROBIN CYCLES) ---
     ageGroups.forEach(group => {
       const groupTeams = teams.filter(t => t.groupId === group.id);
       if (groupTeams.length < 2) return;
 
       const gamesNeeded = Number(group.gamesPerTeam) || 0;
-      
       const teamIndices = groupTeams.map((_, i) => i);
       if (teamIndices.length % 2 !== 0) teamIndices.push(-1); 
       
@@ -483,7 +551,6 @@ export default function App() {
       if (rounds.length > 0) {
         for (let i = 0; i < gamesNeeded; i++) {
            const r = rounds[i % rounds.length];
-           // Calculate which "Cycle" this game is. Cycle 1 = first time through, Cycle 2 = first rematch
            const cycle = Math.floor(i / rounds.length) + 1;
            
            if (r) {
@@ -499,14 +566,11 @@ export default function App() {
            }
         }
       }
-
       allGames = [...allGames, ...finalMatchups];
     });
     
-    // Randomize slightly within their cycles
     allGames.sort(() => Math.random() - 0.5);
     
-    // --- STATE TRACKING ---
     const scheduledGames = [];
     const pendingGames = [...allGames];
     
@@ -514,20 +578,18 @@ export default function App() {
     const teamWeeklyGames = {};
     const teamWeeklyWeekdayGames = {};
     const teamWeeklyWeekendGames = {};
-    const teamBusyTimes = {}; // Prevents double-booking
+    const teamBusyTimes = {}; 
     const matchupSides = {};
     const teamHomeCounts = {};
     const coachIntervals = {}; 
     const GAP_BUFFER_MINS = 30;
     
-    // Heuristic Tracking: Games left to schedule per team
     const teamGamesLeft = {};
     allGames.forEach(g => {
         teamGamesLeft[g.teamA.id] = (teamGamesLeft[g.teamA.id] || 0) + 1;
         teamGamesLeft[g.teamB.id] = (teamGamesLeft[g.teamB.id] || 0) + 1;
     });
 
-    // Load External Conflicts into Coach Intervals
     externalConflicts.forEach(conf => {
       const start = timeToMins(conf.timeStr);
       const end = start + conf.duration;
@@ -556,9 +618,6 @@ export default function App() {
       coachIntervals[key].push({ start: startMins, end: endMins });
     };
 
-    // --- TIME SLOT ITERATION (DENSITY PACKING) ---
-    // Instead of picking a game and finding a slot, we pick a slot and find the BEST game for it.
-    
     for (const day of calendarDays) {
         const weekId = getWeekIdentifier(day.dateObj);
         const isWeekday = day.dayOfWeek >= 1 && day.dayOfWeek <= 5;
@@ -567,8 +626,6 @@ export default function App() {
             const gameStart = timeToMins(time);
 
             for (const field of fields) {
-                // Determine Minimum Cycle currently pending for every team
-                // This enforces: "Do not play a Cycle 2 game if you still have Cycle 1 games left"
                 const teamMinCycle = {};
                 for (const g of pendingGames) {
                     teamMinCycle[g.teamA.id] = Math.min(teamMinCycle[g.teamA.id] || 999, g.cycle);
@@ -577,10 +634,6 @@ export default function App() {
 
                 let bestGameIndex = -1;
                 
-                // We make up to 3 passes to fill this specific time slot
-                // Pass 1: Strict Weekly/Daily Limits
-                // Pass 2: Relax Weekly Limits (to force slot filling)
-                // Pass 3: Relax Daily Limits (allow double headers, but not simultaneous)
                 for (let pass = 1; pass <= 3; pass++) {
                     let maxWeight = -1;
 
@@ -589,32 +642,25 @@ export default function App() {
                         const group = ageGroups.find(g => g.id === game.groupId);
                         const durationMins = Number(group.duration) || 90;
 
-                        // --- HARD CONSTRAINTS (Never Relaxed) ---
-                        if (!field.allowedGroups.includes(game.groupId)) continue; // Field Check
-                        if (teamBusyTimes[`${day.dateStr}|${time}|${game.teamA.id}`]) continue; // Double Book
-                        if (teamBusyTimes[`${day.dateStr}|${time}|${game.teamB.id}`]) continue; // Double Book
+                        if (!field.allowedGroups.includes(game.groupId)) continue; 
+                        if (teamBusyTimes[`${day.dateStr}|${time}|${game.teamA.id}`]) continue; 
+                        if (teamBusyTimes[`${day.dateStr}|${time}|${game.teamB.id}`]) continue; 
                         if (hasCoachConflict(game.teamA, game.teamB, day.dateStr, time, durationMins)) continue;
 
-                        // --- THE CYCLE RULE (Rematch Control) ---
-                        // Only schedule this game if both teams have finished all previous cycles
                         if (game.cycle > teamMinCycle[game.teamA.id] || game.cycle > teamMinCycle[game.teamB.id]) {
                             continue; 
                         }
 
-                        // --- FLEXIBLE CONSTRAINTS (Relaxed based on Pass) ---
                         if (pass <= 2) {
-                            // Enforce Max 1 game per day per team
                             if ((teamDailyGames[`${day.dateStr}|${game.teamA.id}`] || 0) >= 1) continue;
                             if ((teamDailyGames[`${day.dateStr}|${game.teamB.id}`] || 0) >= 1) continue;
                         }
 
                         if (pass === 1) {
-                            // Enforce strict weekly games limit
                             const maxWk = Number(group.gamesPerWeek) || 2;
                             if ((teamWeeklyGames[`${weekId}|${game.teamA.id}`] || 0) >= maxWk) continue;
                             if ((teamWeeklyGames[`${weekId}|${game.teamB.id}`] || 0) >= maxWk) continue;
 
-                            // Enforce strict Weekday/Weekend distribution
                             const limitWeekday = Number(group.maxWeekday) !== undefined ? Number(group.maxWeekday) : 1;
                             const limitWeekend = Number(group.maxWeekend) !== undefined ? Number(group.maxWeekend) : 2;
                             if (isWeekday) {
@@ -626,8 +672,6 @@ export default function App() {
                             }
                         }
 
-                        // --- HEURISTIC SCORING ---
-                        // Prioritize the game involving teams with the most games left to schedule
                         const weight = (teamGamesLeft[game.teamA.id] || 0) + (teamGamesLeft[game.teamB.id] || 0);
                         
                         if (weight > maxWeight) {
@@ -635,18 +679,14 @@ export default function App() {
                             bestGameIndex = i;
                         }
                     }
-
-                    // If we found a game on this pass, stop relaxing constraints and proceed
                     if (bestGameIndex !== -1) break;
                 }
 
-                // --- FINALIZE SLOT ---
                 if (bestGameIndex !== -1) {
                     const game = pendingGames[bestGameIndex];
                     const group = ageGroups.find(g => g.id === game.groupId);
                     const durationMins = Number(group.duration) || 90;
 
-                    // Home/Away Balancing
                     const tIds = [game.teamA.id, game.teamB.id].sort();
                     const mKey = `${tIds[0]}|${tIds[1]}`;
                     
@@ -670,7 +710,6 @@ export default function App() {
                     matchupSides[mKey] = homeTeam.id;
                     teamHomeCounts[homeTeam.id] = (teamHomeCounts[homeTeam.id] || 0) + 1;
 
-                    // Mark slot as booked
                     scheduledGames.push({ 
                         ...game, 
                         teamA: homeTeam,
@@ -682,7 +721,6 @@ export default function App() {
                         fieldName: field.name 
                     });
 
-                    // Update Trackers
                     teamBusyTimes[`${day.dateStr}|${time}|${game.teamA.id}`] = true;
                     teamBusyTimes[`${day.dateStr}|${time}|${game.teamB.id}`] = true;
 
@@ -708,14 +746,12 @@ export default function App() {
                     teamGamesLeft[game.teamA.id]--;
                     teamGamesLeft[game.teamB.id]--;
 
-                    // Remove from pending
                     pendingGames.splice(bestGameIndex, 1);
                 }
             }
         }
     }
 
-    // Any games left in pendingGames failed to find a valid slot
     const unscheduledGames = pendingGames.map(g => ({ 
         ...g, 
         reason: `Constraints blocked scheduling (Check Field/Coach availability)` 
@@ -732,9 +768,10 @@ export default function App() {
     };
   };
 
-  // --- UI Sections ---
+  // --- UI Renders ---
 
-  if (isLoading) {
+  // 1. Loading Screen
+  if (appMode === 'loading') {
     return (
       <div className="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center">
         <div className="bg-blue-600 p-4 rounded-2xl text-white shadow-xl shadow-blue-200 mb-6 animate-bounce">
@@ -748,6 +785,201 @@ export default function App() {
     );
   }
 
+  // 2. Landing Page
+  if (appMode === 'landing') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
+        <div className="bg-blue-600 p-4 rounded-2xl text-white shadow-xl shadow-blue-200 mb-8">
+          <Calendar className="w-16 h-16" />
+        </div>
+        <h1 className="font-extrabold text-4xl tracking-tight text-slate-800 mb-4">
+          Welcome to the Portal
+        </h1>
+        <p className="text-slate-500 mb-10 max-w-md mx-auto text-lg">
+          Please select the application you'd like to access today.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-3xl">
+          {/* Option 1: League Scheduler Pro */}
+          <button 
+            onClick={() => setAppMode('scheduler')}
+            className="group relative bg-white p-8 rounded-3xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-blue-300 transition-all duration-300 text-left flex flex-col justify-between h-64 overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-500">
+              <Calendar className="w-32 h-32" />
+            </div>
+            <div>
+              <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center mb-6">
+                <CalendarCheck className="w-6 h-6" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2 group-hover:text-blue-600 transition-colors">
+                League Scheduler Pro
+              </h2>
+              <p className="text-slate-500 text-sm">
+                Generate optimized schedules, manage constraints, and export.
+              </p>
+            </div>
+            <div className="flex items-center text-blue-600 font-bold text-sm uppercase tracking-wider">
+              Continue <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-2 transition-transform" />
+            </div>
+          </button>
+
+          {/* Option 2: Home Run Derby Signup */}
+          <button 
+            onClick={() => setAppMode('derby')}
+            className="group relative bg-white p-8 rounded-3xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-orange-300 transition-all duration-300 text-left flex flex-col justify-between h-64 overflow-hidden"
+          >
+            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-500">
+              <Trophy className="w-32 h-32" />
+            </div>
+            <div>
+              <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center mb-6">
+                <Trophy className="w-6 h-6" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-2 group-hover:text-orange-600 transition-colors">
+                OMYBS Homerun Derby 2026
+              </h2>
+              <p className="text-slate-500 text-sm">
+                Player signups and waitlist management.
+              </p>
+            </div>
+            <div className="flex items-center text-orange-600 font-bold text-sm uppercase tracking-wider">
+              Signup Now <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-2 transition-transform" />
+            </div>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Derby Signup Form View
+  if (appMode === 'derby') {
+    return (
+      <div className="min-h-screen bg-slate-50 pb-20">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
+          <div className="max-w-2xl mx-auto px-4 h-16 flex items-center justify-between">
+            <button 
+              onClick={() => { setAppMode('landing'); setDerbySubmitStatus(null); }}
+              className="flex items-center text-slate-500 hover:text-slate-900 font-medium transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" /> Back
+            </button>
+            <div className="flex items-center gap-2 font-bold text-lg text-slate-800">
+              <Trophy className="w-5 h-5 text-orange-500" /> Derby Signup
+            </div>
+            <div className="w-16"></div> {/* Spacer for center alignment */}
+          </div>
+        </header>
+
+        <main className="max-w-xl mx-auto px-4 py-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-extrabold text-slate-900 mb-3">OMYBS Homerun Derby 2026</h1>
+            <p className="text-slate-500">
+              Space is limited to <span className="font-bold text-orange-600">40 participants per age group</span>. 
+              Sign up below to secure your spot or join the waitlist!
+            </p>
+          </div>
+
+          <Card className="p-6 md:p-8">
+            {derbySubmitStatus === 'success' ? (
+              <div className="text-center py-10 animate-in zoom-in duration-300">
+                <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <CheckCircle className="w-10 h-10" />
+                </div>
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">You're In!</h2>
+                <p className="text-slate-600 mb-8">Your registration has been confirmed for the 2026 Homerun Derby.</p>
+                <Button onClick={() => setDerbySubmitStatus(null)} fullWidth>Submit Another Player</Button>
+              </div>
+            ) : derbySubmitStatus === 'waitlist' ? (
+              <div className="text-center py-10 animate-in zoom-in duration-300">
+                <div className="w-20 h-20 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <ClipboardList className="w-10 h-10" />
+                </div>
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Added to Waitlist</h2>
+                <p className="text-slate-600 mb-8">
+                  The selected age group has reached its 40-player capacity. You have been placed on the waitlist and will be notified if a spot opens up.
+                </p>
+                <Button variant="secondary" onClick={() => setDerbySubmitStatus(null)} fullWidth>Submit Another Player</Button>
+              </div>
+            ) : (
+              <form onSubmit={handleDerbySubmit} className="space-y-5">
+                {derbySubmitStatus === 'error' && (
+                  <div className="p-4 bg-red-50 text-red-700 rounded-xl border border-red-200 flex items-center gap-3">
+                    <AlertCircle className="w-5 h-5 shrink-0" />
+                    <p className="text-sm font-medium">Something went wrong. Please check your connection and try again.</p>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="text-sm font-semibold text-slate-600 ml-1">Age Group *</label>
+                  <select 
+                    required
+                    className="w-full px-4 py-3 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all text-base shadow-sm"
+                    value={derbyForm.ageGroup}
+                    onChange={e => setDerbyForm({...derbyForm, ageGroup: e.target.value})}
+                  >
+                    <option value="" disabled>Select Age Group</option>
+                    <option value="6u">6U</option>
+                    <option value="7u">7U</option>
+                    <option value="8u">8U</option>
+                    <option value="9u">9U</option>
+                    <option value="10u">10U</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <Input 
+                    label="Player's Full Name *" 
+                    required 
+                    placeholder="John Doe"
+                    value={derbyForm.playerName}
+                    onChange={e => setDerbyForm({...derbyForm, playerName: e.target.value})}
+                  />
+                  <Input 
+                    label="Nickname" 
+                    placeholder="e.g. 'Slugger'"
+                    value={derbyForm.nickname}
+                    onChange={e => setDerbyForm({...derbyForm, nickname: e.target.value})}
+                  />
+                </div>
+
+                <Input 
+                  label="Spring 2026 Team Name *" 
+                  required 
+                  placeholder="e.g. Tigers"
+                  value={derbyForm.teamName}
+                  onChange={e => setDerbyForm({...derbyForm, teamName: e.target.value})}
+                />
+
+                <Input 
+                  label="Email Address *" 
+                  required 
+                  type="email"
+                  placeholder="parent@email.com"
+                  value={derbyForm.email}
+                  onChange={e => setDerbyForm({...derbyForm, email: e.target.value})}
+                />
+
+                <div className="pt-4">
+                  <Button 
+                    type="submit" 
+                    fullWidth 
+                    disabled={derbySubmitStatus === 'submitting'}
+                    className="bg-orange-500 hover:bg-orange-600 shadow-orange-200 text-lg py-3"
+                  >
+                    {derbySubmitStatus === 'submitting' ? 'Processing...' : 'Complete Signup'}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </Card>
+        </main>
+      </div>
+    );
+  }
+
+  // 4. Scheduler View (Original App)
+  // Reused render blocks below
   const renderSetup = () => (
     <div className="space-y-6">
       <Card className="p-5">
@@ -974,7 +1206,6 @@ export default function App() {
           </div>
       </Card>
       
-      {/* Import Conflicts Card */}
       <Card className="p-5 mt-6">
         <h3 className="font-bold text-slate-800 mb-2">Import External Conflicts</h3>
         <p className="text-sm text-slate-500 mb-4">
@@ -1241,10 +1472,17 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans pb-32 md:pb-10">
-      {/* Header - Simplified for Mobile */}
+      {/* Header */}
       <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-20">
         <div className="max-w-6xl mx-auto px-4 h-14 md:h-16 flex items-center justify-between">
            <div className="flex items-center gap-2.5">
+              <button 
+                onClick={() => setAppMode('landing')}
+                className="hover:bg-slate-100 p-2 rounded-lg transition-colors mr-1 -ml-2"
+                title="Back to Main Menu"
+              >
+                <ArrowLeft className="w-5 h-5 text-slate-500" />
+              </button>
               <div className="bg-blue-600 p-1.5 rounded-lg text-white">
                 <Calendar className="w-5 h-5" />
               </div>
@@ -1253,7 +1491,6 @@ export default function App() {
               </h1>
            </div>
            
-           {/* Desktop Only Button */}
            <div className="hidden md:block">
              {activeTab === 'schedule' ? (
                 <Button variant="secondary" onClick={generateSchedule} disabled={isGenerating}>Regenerate</Button>
@@ -1267,8 +1504,6 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
-        
-        {/* Scrollable Mobile Tabs */}
         <div className="flex overflow-x-auto no-scrollbar gap-2 mb-6 pb-2 -mx-4 px-4 md:mx-0 md:px-0 md:flex-wrap">
           {tabs.map(tab => {
             const Icon = tab.icon;
@@ -1290,7 +1525,6 @@ export default function App() {
           })}
         </div>
 
-        {/* Content Area */}
         <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
            {activeTab === 'setup' && renderSetup()}
            {activeTab === 'fields' && <div className="space-y-6">{renderAgeGroups()}{renderFields()}</div>}
@@ -1299,7 +1533,6 @@ export default function App() {
            {activeTab === 'team-schedules' && renderTeamSchedules()}
            {activeTab === 'saves' && renderSaves()}
         </div>
-
       </main>
 
       {/* Mobile Sticky Footer Action Bar */}

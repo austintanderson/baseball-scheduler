@@ -3,19 +3,20 @@ import {
   Calendar, Users, MapPin, Settings, ChevronRight, Plus, Trash2, AlertCircle, 
   CheckCircle, Shield, UserCheck, Download, Clock, CalendarCheck, Share, Save, 
   FolderOpen, Search, Printer, WifiOff, FileText, Trophy, ArrowRight, ArrowLeft,
-  ClipboardList
+  ClipboardList, XCircle
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 
 let app, auth, db, appId, rawAppId;
 try {
   // 👇 REPLACE THESE VALUES WITH YOUR FIREBASE PROJECT CONFIGURATION 👇
   const manualFirebaseConfig = {
-    apiKey: "AIzaSyBRS4jd8NJWzGRvqpK-OYJ648KnzGS4YOU",
+    // Pulling from environment variables to prevent GitHub plaintext secret alerts
+    apiKey: import.meta.env?.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
     authDomain: "baseball-scheduler-af4f5.firebaseapp.com",
     projectId: "baseball-scheduler-af4f5",
     storageBucket: "baseball-scheduler-af4f5.firebasestorage.app",
@@ -206,7 +207,12 @@ export default function App() {
     teamName: '',
     email: ''
   });
-  const [derbySubmitStatus, setDerbySubmitStatus] = useState(null); // 'submitting', 'waitlist', 'success', 'error'
+  
+  // Submit state now holds an object: { status: 'success'|'waitlist'|'error', cancelCode?: '...' }
+  const [derbySubmitState, setDerbySubmitState] = useState(null); 
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancelCodeInput, setCancelCodeInput] = useState('');
+  const [cancelStatus, setCancelStatus] = useState(null);
 
   // --- Initialization Effects ---
   useEffect(() => {
@@ -294,30 +300,87 @@ export default function App() {
       alert("Database connection not ready. Please try again.");
       return;
     }
-    setDerbySubmitStatus('submitting');
+    setDerbySubmitState({ status: 'submitting' });
 
     try {
       // 1. Calculate how many signups already exist for this age group
-      const existingCount = derbySignups.filter(s => s.ageGroup === derbyForm.ageGroup).length;
+      const existingCount = derbySignups.filter(s => s.ageGroup === derbyForm.ageGroup && s.status === 'registered').length;
       
       // 2. Determine status (40 participant limit)
       const isWaitlist = existingCount >= 40;
       const finalStatus = isWaitlist ? 'waitlist' : 'registered';
 
-      // 3. Save to Firestore (Public Collection)
+      // 3. Generate a unique cancellation code
+      const generatedCancelCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+      // 4. Save to Firestore (Public Collection)
       const signupsRef = collection(db, 'artifacts', appId, 'public', 'data', 'derby_signups');
       await addDoc(signupsRef, {
         ...derbyForm,
-        status: finalStatus,
+        status: finalStatus, // This explicitly saves "registered" or "waitlist" in your DB
+        cancelCode: generatedCancelCode,
         userId: user.uid,
         createdAt: serverTimestamp()
       });
 
-      setDerbySubmitStatus(isWaitlist ? 'waitlist' : 'success');
+      setDerbySubmitState({ 
+        status: isWaitlist ? 'waitlist' : 'success', 
+        cancelCode: generatedCancelCode 
+      });
       setDerbyForm({ ageGroup: '', playerName: '', nickname: '', teamName: '', email: '' });
     } catch (error) {
       console.error("Submission failed:", error);
-      setDerbySubmitStatus('error');
+      setDerbySubmitState({ status: 'error' });
+    }
+  };
+
+  const handleCancelSpot = async (e) => {
+    e.preventDefault();
+    if (!user || !db || !appId) return;
+    setCancelStatus('processing');
+
+    try {
+      // Find the document with the matching cancel code
+      const targetSignup = derbySignups.find(s => s.cancelCode === cancelCodeInput.trim().toUpperCase());
+      
+      if (!targetSignup) {
+        setCancelStatus('invalid');
+        return;
+      }
+
+      // Delete the user's registration
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'derby_signups', targetSignup.id));
+
+      // ONLY bump the waitlist if the cancelled user was 'registered'
+      if (targetSignup.status === 'registered') {
+        // Find the oldest waitlisted person in the SAME age group
+        const waitlisted = derbySignups
+          .filter(s => s.ageGroup === targetSignup.ageGroup && s.status === 'waitlist' && s.id !== targetSignup.id)
+          .sort((a, b) => {
+            const timeA = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+            const timeB = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+            return timeA - timeB;
+          });
+
+        if (waitlisted.length > 0) {
+          const nextInLine = waitlisted[0];
+          // Update their status to registered
+          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'derby_signups', nextInLine.id), {
+            status: 'registered'
+          });
+        }
+      }
+
+      setCancelStatus('success');
+      setCancelCodeInput('');
+      setTimeout(() => {
+        setIsCancelling(false);
+        setCancelStatus(null);
+      }, 3000);
+
+    } catch (error) {
+      console.error("Cancellation failed:", error);
+      setCancelStatus('error');
     }
   };
 
@@ -826,7 +889,7 @@ export default function App() {
 
           {/* Option 2: Home Run Derby Signup */}
           <button 
-            onClick={() => setAppMode('derby')}
+            onClick={() => { setAppMode('derby'); setIsCancelling(false); setDerbySubmitState(null); }}
             className="group relative bg-white p-8 rounded-3xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-orange-300 transition-all duration-300 text-left flex flex-col justify-between h-64 overflow-hidden"
           >
             <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-500">
@@ -859,7 +922,7 @@ export default function App() {
         <header className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
           <div className="max-w-2xl mx-auto px-4 h-16 flex items-center justify-between">
             <button 
-              onClick={() => { setAppMode('landing'); setDerbySubmitStatus(null); }}
+              onClick={() => { setAppMode('landing'); setDerbySubmitState(null); setIsCancelling(false); }}
               className="flex items-center text-slate-500 hover:text-slate-900 font-medium transition-colors"
             >
               <ArrowLeft className="w-4 h-4 mr-2" /> Back
@@ -881,29 +944,132 @@ export default function App() {
           </div>
 
           <Card className="p-6 md:p-8">
-            {derbySubmitStatus === 'success' ? (
-              <div className="text-center py-10 animate-in zoom-in duration-300">
+            {isCancelling ? (
+              // CANCELLATION VIEW
+              <div className="animate-in fade-in zoom-in duration-300">
+                <h2 className="text-2xl font-bold text-slate-900 mb-2">Cancel Registration</h2>
+                <p className="text-slate-600 mb-6 text-sm">
+                  Enter the 6-character cancellation code you received when you signed up. This will instantly open your spot for the next player on the waitlist.
+                </p>
+
+                {cancelStatus === 'success' ? (
+                   <div className="p-6 bg-green-50 text-green-800 rounded-xl border border-green-200 text-center">
+                     <CheckCircle className="w-8 h-8 mx-auto mb-2 text-green-600" />
+                     <p className="font-bold">Cancellation Successful</p>
+                     <p className="text-sm mt-1">Your spot has been released.</p>
+                   </div>
+                ) : (
+                  <form onSubmit={handleCancelSpot} className="space-y-4">
+                    {cancelStatus === 'invalid' && (
+                      <div className="p-3 bg-red-50 text-red-700 rounded-lg border border-red-200 flex items-center gap-2 text-sm">
+                        <AlertCircle className="w-4 h-4 shrink-0" /> Invalid code. Please check and try again.
+                      </div>
+                    )}
+                    {cancelStatus === 'error' && (
+                      <div className="p-3 bg-red-50 text-red-700 rounded-lg border border-red-200 flex items-center gap-2 text-sm">
+                        <AlertCircle className="w-4 h-4 shrink-0" /> Error processing request.
+                      </div>
+                    )}
+
+                    <Input 
+                      label="Cancellation Code" 
+                      required 
+                      placeholder="e.g. X7B9A2"
+                      value={cancelCodeInput}
+                      onChange={e => setCancelCodeInput(e.target.value)}
+                      className="uppercase font-mono tracking-widest text-center text-lg"
+                    />
+
+                    <div className="pt-2 flex gap-3">
+                      <Button variant="secondary" fullWidth onClick={() => setIsCancelling(false)}>Go Back</Button>
+                      <Button 
+                        type="submit" 
+                        variant="danger" 
+                        fullWidth 
+                        disabled={cancelStatus === 'processing' || !cancelCodeInput}
+                      >
+                        {cancelStatus === 'processing' ? 'Processing...' : 'Confirm Cancel'}
+                      </Button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            ) : derbySubmitState?.status === 'success' ? (
+              // SUCCESS VIEW
+              <div className="text-center py-6 animate-in zoom-in duration-300">
                 <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-6">
                   <CheckCircle className="w-10 h-10" />
                 </div>
                 <h2 className="text-2xl font-bold text-slate-900 mb-2">You're In!</h2>
-                <p className="text-slate-600 mb-8">Your registration has been confirmed for the 2026 Homerun Derby.</p>
-                <Button onClick={() => setDerbySubmitStatus(null)} fullWidth>Submit Another Player</Button>
+                <p className="text-slate-600 mb-6">Your registration has been confirmed for the 2026 Homerun Derby.</p>
+                
+                {/* PAYMENT SECTION */}
+                <div className="bg-blue-50 border border-blue-200 p-5 rounded-xl mb-6 text-center">
+                  <h3 className="font-bold text-blue-900 text-lg mb-1">Registration Fee: $10</h3>
+                  <p className="text-sm text-blue-700 mb-4">Please complete your payment via Venmo to finalize your spot.</p>
+                  
+                  <div className="flex flex-col items-center gap-4">
+                    {/* Venmo Deep Link Button */}
+                    <a 
+                      href={`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - ${encodeURIComponent(derbyForm.playerName)}`}
+                      className="bg-[#008CFF] hover:bg-[#0074D9] text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors w-full justify-center shadow-sm"
+                    >
+                      Pay with Venmo
+                    </a>
+                    
+                    <div className="flex items-center gap-3 w-full text-slate-400 text-sm">
+                      <div className="h-px bg-blue-200 flex-1"></div>
+                      OR SCAN
+                      <div className="h-px bg-blue-200 flex-1"></div>
+                    </div>
+
+                    {/* Generates a dynamic QR code containing the exact same Venmo payment URL */}
+                    <div className="bg-white p-3 rounded-xl border border-blue-100 shadow-sm inline-block">
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`venmo://paycharge?txn=pay&recipients=omybs&amount=10&note=Derby Fee - ${derbyForm.playerName}`)}`} 
+                        alt="Venmo QR Code" 
+                        className="w-32 h-32"
+                      />
+                    </div>
+                    <p className="text-xs text-slate-500">@omybs</p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl mb-8 text-left">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Important: Save this code</p>
+                  <p className="text-sm text-slate-700 mb-2">If you need to drop out, please use this code to cancel so the next child on the waitlist gets a spot:</p>
+                  <div className="font-mono text-xl font-bold text-slate-900 bg-white border border-slate-300 py-2 px-4 rounded-lg text-center tracking-widest flex justify-center items-center gap-2">
+                    {derbySubmitState.cancelCode}
+                  </div>
+                </div>
+
+                <Button onClick={() => setDerbySubmitState(null)} fullWidth>Submit Another Player</Button>
               </div>
-            ) : derbySubmitStatus === 'waitlist' ? (
-              <div className="text-center py-10 animate-in zoom-in duration-300">
+            ) : derbySubmitState?.status === 'waitlist' ? (
+              // WAITLIST VIEW
+              <div className="text-center py-6 animate-in zoom-in duration-300">
                 <div className="w-20 h-20 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6">
                   <ClipboardList className="w-10 h-10" />
                 </div>
                 <h2 className="text-2xl font-bold text-slate-900 mb-2">Added to Waitlist</h2>
-                <p className="text-slate-600 mb-8">
+                <p className="text-slate-600 mb-6">
                   The selected age group has reached its 40-player capacity. You have been placed on the waitlist and will be notified if a spot opens up.
                 </p>
-                <Button variant="secondary" onClick={() => setDerbySubmitStatus(null)} fullWidth>Submit Another Player</Button>
+
+                <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl mb-8 text-left">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1">Save this code</p>
+                  <p className="text-sm text-slate-700 mb-2">If you no longer wish to be on the waitlist, you can cancel your request using this code:</p>
+                  <div className="font-mono text-xl font-bold text-slate-900 bg-white border border-slate-300 py-2 px-4 rounded-lg text-center tracking-widest">
+                    {derbySubmitState.cancelCode}
+                  </div>
+                </div>
+
+                <Button variant="secondary" onClick={() => setDerbySubmitState(null)} fullWidth>Submit Another Player</Button>
               </div>
             ) : (
+              // DEFAULT SIGNUP FORM
               <form onSubmit={handleDerbySubmit} className="space-y-5">
-                {derbySubmitStatus === 'error' && (
+                {derbySubmitState?.status === 'error' && (
                   <div className="p-4 bg-red-50 text-red-700 rounded-xl border border-red-200 flex items-center gap-3">
                     <AlertCircle className="w-5 h-5 shrink-0" />
                     <p className="text-sm font-medium">Something went wrong. Please check your connection and try again.</p>
@@ -922,8 +1088,7 @@ export default function App() {
                     <option value="6u">6U</option>
                     <option value="7u">7U</option>
                     <option value="8u">8U</option>
-                    <option value="9u">9U</option>
-                    <option value="10u">10U</option>
+                    <option value="9u/10u">9U / 10U</option>
                   </select>
                 </div>
 
@@ -964,15 +1129,28 @@ export default function App() {
                   <Button 
                     type="submit" 
                     fullWidth 
-                    disabled={derbySubmitStatus === 'submitting'}
+                    disabled={derbySubmitState?.status === 'submitting'}
                     className="bg-orange-500 hover:bg-orange-600 shadow-orange-200 text-lg py-3"
                   >
-                    {derbySubmitStatus === 'submitting' ? 'Processing...' : 'Complete Signup'}
+                    {derbySubmitState?.status === 'submitting' ? 'Processing...' : 'Complete Signup'}
                   </Button>
                 </div>
               </form>
             )}
           </Card>
+
+          {/* Cancellation Toggle */}
+          {!isCancelling && (!derbySubmitState || derbySubmitState.status === 'error') && (
+            <div className="mt-8 text-center">
+              <button 
+                type="button"
+                onClick={() => setIsCancelling(true)}
+                className="text-sm font-medium text-slate-500 hover:text-slate-800 transition-colors underline underline-offset-4"
+              >
+                Need to cancel a spot? Click here.
+              </button>
+            </div>
+          )}
         </main>
       </div>
     );

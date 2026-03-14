@@ -432,15 +432,15 @@ export default function App() {
         </div>
       `;
 
-      // 5. Save to Firestore (Public Collection)
+      // 5. Save to Firestore
       const signupsRef = collection(db, 'artifacts', appId, 'public', 'data', 'derby_signups');
       await addDoc(signupsRef, {
         ...derbyForm,
         status: finalStatus, 
         cancelCode: generatedCancelCode,
         userId: user.uid,
+        paid: false, // Default tracking field for admin dashboard
         createdAt: serverTimestamp(),
-        // These two fields tell the Firebase Extension to send an email!
         to: derbyForm.email,
         message: {
           subject: `OMYBS Home Run Derby - ${isWaitlist ? 'Waitlist' : 'Registration'} Confirmation`,
@@ -451,7 +451,7 @@ export default function App() {
       setDerbySubmitState({ 
         status: isWaitlist ? 'waitlist' : 'success', 
         cancelCode: generatedCancelCode,
-        submittedName: submittedPlayerName // Save the name here so Venmo can use it!
+        submittedName: submittedPlayerName 
       });
       setDerbyForm({ ageGroup: '', playerName: '', nickname: '', teamName: '', email: '' });
     } catch (error) {
@@ -1054,17 +1054,13 @@ export default function App() {
   if (appMode === 'landing') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
-        <div className="bg-blue-600 p-4 rounded-2xl text-white shadow-xl shadow-blue-200 mb-8">
-          <Calendar className="w-16 h-16" />
+        <div className="bg-orange-600 p-4 rounded-2xl text-white shadow-xl shadow-orange-200 mb-8">
+          <Trophy className="w-16 h-16" />
         </div>
         <h1 className="font-extrabold text-4xl tracking-tight text-slate-800 mb-4">
-          Welcome to the Portal
+          OMYBS Home Run Derby 2026
         </h1>
-        <p className="text-slate-500 mb-10 max-w-md mx-auto text-lg">
-          Please select the application you'd like to access today.
-        </p>
 
-        {/* Changed to max-w-xl to center the single remaining button better */}
         <div className="grid grid-cols-1 gap-6 w-full max-w-xl">
           
           {/* Option 1: League Scheduler Pro - COMMENTED OUT TEMPORARILY */}
@@ -1093,29 +1089,16 @@ export default function App() {
           </button>
           */}
 
-          {/* Option 2: Home Run Derby Signup */}
-          <button 
-            onClick={() => { setAppMode('derby'); setIsCancelling(false); setDerbySubmitState(null); }}
-            className="group relative bg-white p-8 rounded-3xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-orange-300 transition-all duration-300 text-left flex flex-col justify-between h-64 overflow-hidden"
-          >
-            <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-500">
-              <Trophy className="w-32 h-32" />
-            </div>
-            <div>
-              <div className="w-12 h-12 bg-orange-100 text-orange-600 rounded-xl flex items-center justify-center mb-6">
-                <Trophy className="w-6 h-6" />
-              </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-2 group-hover:text-orange-600 transition-colors">
-                OMYBS Home Run Derby 2026
-              </h2>
-              <p className="text-slate-500 text-sm">
-                Player signups and waitlist management.
-              </p>
-            </div>
-            <div className="flex items-center text-orange-600 font-bold text-sm uppercase tracking-wider">
-              Signup Now <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-2 transition-transform" />
-            </div>
-          </button>
+          {/* Option 2: Home Run Derby Signup (CLOSED MESSAGE) */}
+          <div className="relative bg-white p-8 md:p-12 rounded-3xl border border-slate-200 shadow-sm text-center flex flex-col justify-between overflow-hidden">
+             <h2 className="text-2xl font-bold text-slate-800 mb-4">Signups Officially Closed</h2>
+             <p className="text-slate-600 text-lg mb-8 leading-relaxed">
+               Thank you for your interest in the OMYBS Home Run Derby! Signups have officially closed, but please plan to come out to cheer on your team mates!
+             </p>
+             <div className="bg-orange-50 border border-orange-100 text-orange-800 p-4 rounded-xl font-bold text-lg shadow-sm">
+                See you at 5:30PM at the Heardmont 5 Complex!
+             </div>
+          </div>
         </div>
       </div>
     );

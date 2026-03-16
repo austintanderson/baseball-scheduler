@@ -3,12 +3,12 @@ import {
   Calendar, Users, MapPin, Settings, ChevronRight, Plus, Trash2, AlertCircle, 
   CheckCircle, Shield, UserCheck, Download, Clock, CalendarCheck, Share, Save, 
   FolderOpen, Search, Printer, WifiOff, FileText, Trophy, ArrowRight, ArrowLeft,
-  ClipboardList, XCircle
+  ClipboardList, XCircle, Lock
 } from 'lucide-react';
 
 // --- Firebase Initialization ---
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithCustomToken, signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 
 let app, auth, db, appId, rawAppId;
@@ -180,8 +180,11 @@ const Input = ({ label, className = "", ...props }) => (
 
 // --- Main Application ---
 export default function App() {
-  // App Mode State: 'loading' -> 'landing' -> 'scheduler' | 'derby'
+  // App Mode State: 'loading' -> 'login' -> 'landing' -> 'scheduler' | 'derby'
   const [appMode, setAppMode] = useState('loading');
+  const [accessCode, setAccessCode] = useState('');
+  const [loginError, setLoginError] = useState(false);
+  const [isSplashDone, setIsSplashDone] = useState(false);
   
   // Firebase State
   const [user, setUser] = useState(null);
@@ -226,7 +229,7 @@ export default function App() {
   // --- Initialization Effects ---
   useEffect(() => {
     // Splash screen timer
-    const timer = setTimeout(() => setAppMode('landing'), 1500);
+    const timer = setTimeout(() => setIsSplashDone(true), 1500);
     
     // Load local saves for scheduler
     setSavedSchedules(storage.loadAll());
@@ -239,11 +242,12 @@ export default function App() {
     if (!auth) return;
     const initAuth = async () => {
       try {
+        // If in Canvas testing environment, authenticate automatically. 
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
         }
+        // Notice we removed signInAnonymously() here! 
+        // We now wait for the user to enter the passcode on the login screen.
       } catch (e) {
         console.error("Auth error:", e);
       }
@@ -253,6 +257,21 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
+
+  // Route based on auth state and splash screen completion
+  useEffect(() => {
+    if (isSplashDone) {
+      if (user) {
+        // If logged in, send to landing page (unless they are already deep in the app)
+        if (appMode === 'loading' || appMode === 'login') {
+          setAppMode('landing');
+        }
+      } else {
+        // If not logged in, force them to the login screen
+        setAppMode('login');
+      }
+    }
+  }, [isSplashDone, user, appMode]);
 
   // Firebase Data Fetch Effect (For Derby Signups)
   useEffect(() => {
@@ -301,6 +320,20 @@ export default function App() {
        setTeams(newTeams);
     }
   }, [ageGroups]);
+
+  // --- Portal Login Handler ---
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setLoginError(false);
+    try {
+      // We use a dummy email address, treating the access code as the password!
+      // This way Firebase securely validates the passcode without us hardcoding it.
+      await signInWithEmailAndPassword(auth, 'portal@omybs.com', accessCode);
+    } catch (error) {
+      console.error("Login failed:", error);
+      setLoginError(true);
+    }
+  };
 
   // --- Derby Handlers ---
   const handleDerbySubmit = async (e) => {
@@ -1050,21 +1083,61 @@ export default function App() {
     );
   }
 
-  // 2. Landing Page
+  // 2. Login Page
+  if (appMode === 'login') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
+        <div className="bg-slate-800 p-4 rounded-2xl text-white shadow-xl shadow-slate-200 mb-8">
+          <Lock className="w-16 h-16" />
+        </div>
+        <h1 className="font-extrabold text-4xl tracking-tight text-slate-800 mb-4">
+          Portal Access
+        </h1>
+        <p className="text-slate-500 mb-8 max-w-md mx-auto text-lg">
+          Please enter the access code to continue.
+        </p>
+
+        <Card className="p-6 md:p-8 w-full max-w-md">
+          <form onSubmit={handleLogin} className="space-y-4">
+            {loginError && (
+              <div className="p-3 bg-red-50 text-red-700 rounded-lg border border-red-200 flex items-center gap-2 text-sm text-left">
+                <AlertCircle className="w-4 h-4 shrink-0" /> Incorrect access code. Please try again.
+              </div>
+            )}
+            <Input 
+              type="password"
+              placeholder="Enter access code"
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value)}
+              required
+              className="text-center text-xl tracking-widest"
+            />
+            <Button type="submit" fullWidth className="bg-slate-800 hover:bg-slate-900 shadow-slate-200 py-3 text-lg">
+              Enter Portal
+            </Button>
+          </form>
+        </Card>
+      </div>
+    );
+  }
+
+  // 3. Landing Page
   if (appMode === 'landing') {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center animate-in fade-in duration-500">
-        <div className="bg-orange-600 p-4 rounded-2xl text-white shadow-xl shadow-orange-200 mb-8">
-          <Trophy className="w-16 h-16" />
+        <div className="bg-blue-600 p-4 rounded-2xl text-white shadow-xl shadow-blue-200 mb-8">
+          <Calendar className="w-16 h-16" />
         </div>
         <h1 className="font-extrabold text-4xl tracking-tight text-slate-800 mb-4">
-          OMYBS Home Run Derby 2026
+          Welcome to the Portal
         </h1>
+        <p className="text-slate-500 mb-10 max-w-md mx-auto text-lg">
+          Please select the application you'd like to access today.
+        </p>
 
         <div className="grid grid-cols-1 gap-6 w-full max-w-xl">
           
-          {/* Option 1: League Scheduler Pro - COMMENTED OUT TEMPORARILY */}
-          {/*
+          {/* Option 1: League Scheduler Pro */}
           <button 
             onClick={() => setAppMode('scheduler')}
             className="group relative bg-white p-8 rounded-3xl border border-slate-200 shadow-sm hover:shadow-xl hover:border-blue-300 transition-all duration-300 text-left flex flex-col justify-between h-64 overflow-hidden"
@@ -1087,9 +1160,9 @@ export default function App() {
               Continue <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-2 transition-transform" />
             </div>
           </button>
-          */}
 
-          {/* Option 2: Home Run Derby Signup (CLOSED MESSAGE) */}
+          {/* Option 2: Home Run Derby Signup (CLOSED MESSAGE) - TEMPORARILY HIDDEN */}
+          {/*
           <div className="relative bg-white p-8 md:p-12 rounded-3xl border border-slate-200 shadow-sm text-center flex flex-col justify-between overflow-hidden">
              <h2 className="text-2xl font-bold text-slate-800 mb-4">Signups Officially Closed</h2>
              <p className="text-slate-600 text-lg mb-8 leading-relaxed">
@@ -1099,6 +1172,7 @@ export default function App() {
                 See you at 5:30PM at the Heardmont 5 Complex!
              </div>
           </div>
+          */}
         </div>
       </div>
     );
